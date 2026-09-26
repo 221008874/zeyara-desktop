@@ -1,0 +1,5 @@
+[target.x86_64-pc-windows-msvc]
+rustflags = ["--cfg", "tokio_unstable"]
+
+[target.x86_64-pc-windows-gnu]
+rustflags = ["-C", "link-args=-Wl,--exclude-libs=ALL,--exclude-all-symbols"]

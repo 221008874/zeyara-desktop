@@ -1,0 +1,193 @@
+# backup of smartclinicadmin taken 2026-09-26T08:52:39.620Z
+# ACTIVE release=projects/smartclinicadmin/releases/cloud.firestore
+# ACTIVE ruleset=projects/smartclinicadmin/rulesets/f325a74f-4cb0-4d8c-994d-12908c621920  (release createTime=2026-04-21T18:23:07.249459Z)
+# --- restore with: firebase deploy --only firestore:rules --project smartclinicadmin
+# (after copying this content into firestore.rules)
+rules_version = '2';
+
+// ===========================================================================
+// Zeyara Clinic — Firestore rules for project `smartclinicadmin`
+// ===========================================================================
+// Captured from the live project on 2026-09-25 (release created 2026-04-21) and
+// committed here so the deployed rules stop living only in the console.
+//
+// IMPORTANT — read before changing:
+// This project HAS real Firebase-Auth clients reading Firestore directly:
+//   - the doctor web app            (comm_doctors, comm_appointments, ...)
+//   - the patient/community app     (OTP verified_phone custom claim)
+//   - Vercel API handlers           (POST /api/community/bookings, via Admin SDK)
+// A deny-all ruleset would break all three. Do NOT replace this with a blanket
+// deny without first migrating those clients to go through the Clinic Server.
+//
+// Deploy with:
+//   firebase deploy --only firestore:rules --project smartclinicadmin
+//
+// WHAT CHANGED vs the live rules (deployed 2026-09-25, pending):
+//   comm_doctor_secrets client READ revoked. Per its own comment that collection
+//   holds licenseKey, tenantId, providerId and hmacKey. It was
+//   `allow read: if request.auth != null`, so ANY signed-in user — including
+//   every patient who used the community app — could read every clinic's
+//   license key and HMAC signing secret and use them to forge sync requests or
+//   license files. Nothing legitimate reads it from a client; the server and
+//   the Vercel handlers use the Admin SDK, which bypasses these rules.
+//
+// KNOWN GAP (not fixed here, needs a follow-up):
+//   Reads are not tenant-scoped. Any authenticated user can read documents for
+//   every clinic in `comm_patients` / `comm_appointments` / `comm_tenants`.
+//   Fixing that requires the clients to carry a tenant claim and the rules to
+//   assert it; inventing the claim shape here would break them.
+// ===========================================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Patient's OTP-verified phone (custom-token claim); null if absent.
+    function verifiedPhone() {
+      return request.auth != null ? request.auth.token.verified_phone : null;
+    }
+
+    // Platform administrator of the admin panel. Set by
+    // clinic-admin api/admin/register-verify.js (setCustomUserClaims {admin:true})
+    // and checked client-side in App.jsx and server-side in auth-middleware.js.
+    // Far stronger than `request.auth != null`, because a Firebase web API key
+    // is public: any signed-in patient could otherwise reach these collections.
+    function isAdmin() {
+      return request.auth != null
+        && (request.auth.token.admin == true || request.auth.token.role == 'admin');
+    }
+
+    // ── Doctor Profiles ───────────────────────────────────────────
+    // Read after auth (doctor signs in to web app).
+    // All writes via Admin SDK (saas admin panel, Vercel API handlers).
+    match /comm_doctors/{doctorId} {
+      allow read: if request.auth != null;
+      allow write: if false;
+    }
+
+    // ── Doctor Secrets (licenseKey, tenantId, providerId, hmacKey) ─
+    // SERVER ONLY. These are signing credentials: exposing them to any
+    // authenticated client would let it forge sync requests and license files.
+    // Reads/writes happen exclusively through the Admin SDK.
+    match /comm_doctor_secrets/{doctorId} {
+      allow read, write: if false;
+    }
+
+    // ── Doctor Users (email → doctorId mapping) ───────────────────
+    // Email-based doc IDs. Read after auth; own-email update only.
+    match /comm_doctor_users/{email} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null && request.auth.token.email == email;
+      allow update: if request.auth != null && request.auth.token.email == email;
+      allow delete: if false;
+    }
+
+    // ── Patients ──────────────────────────────────────────────────
+    // Written by the patient themselves (phone-verified) or by the
+    // server/ERP via Admin SDK. Client writes are scoped to the
+    // patient's own OTP-verified phone.
+    match /comm_patients/{patientId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null
+        && request.resource.data.phone is string
+        && request.resource.data.phone == verifiedPhone();
+      allow update: if request.auth != null
+        && resource.data.phone == verifiedPhone();
+      allow delete: if false;
+    }
+
+    // ── Appointments ──────────────────────────────────────────────
+    // Bookings are CREATED/UPDATED only by the ERP via Admin SDK
+    // (POST /api/community/bookings), which validates the doctor and
+    // injects trusted routing fields. Clients must NOT write directly.
+    match /comm_appointments/{appointmentId} {
+      allow read: if request.auth != null;
+      allow write: if false;
+    }
+
+    // ── Notifications ──────────────────────────────────────────────
+    match /comm_notifications/{notificationId} {
+      allow read: if request.auth != null;
+      allow write: if false;
+    }
+
+    // ── Reminders ──────────────────────────────────────────────────
+    match /comm_reminders/{reminderId} {
+      allow read: if request.auth != null;
+      allow write: if false;
+    }
+
+    // ── Support Requests ──────────────────────────────────────────
+    // Created by the patient (phone-verified) or by the server via
+    // Admin SDK. Client writes scoped to the requester's own phone.
+    match /patient_support_requests/{requestId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null
+        && request.resource.data.phone is string
+        && request.resource.data.phone == verifiedPhone();
+      allow update: if request.auth != null
+        && resource.data.phone == verifiedPhone();
+      allow delete: if false;
+    }
+
+    // ── Tenants ────────────────────────────────────────────────────
+    match /comm_tenants/{tenantId} {
+      allow read: if request.auth != null;
+      allow write: if false;
+    }
+
+    // ── Sync Log ───────────────────────────────────────────────────
+    match /comm_sync_log/{logId} {
+      allow read: if request.auth != null;
+      allow write: if false;
+    }
+
+    // ── OTP Requests (server-only via Admin SDK) ──────────────────
+    match /comm_otp_requests/{otpId} {
+      allow read, write: if false;
+    }
+
+    // ── SaaS Licenses (server-only via Admin SDK) ─────────────────
+    match /saas_licenses/{licenseId} {
+      allow read, write: if false;
+    }
+
+    // ── Server License (server-only via Admin SDK) ────────────────
+    match /server_license/{docId} {
+      allow read, write: if false;
+    }
+
+    // ── Admin Settings (server-only via Admin SDK) ────────────────
+    match /admin_settings/{settingId} {
+      allow read, write: if false;
+    }
+
+    // ── App Versions (admin panel release management) ───────
+    // Written by the admin panel's Updates page (publishVersion/deleteRelease)
+    // and read by nothing else: the Clinic Server's update check runs against
+    // its own `releases` collection via the Admin SDK.
+    // Release metadata only (version, downloadUrl, checksum, forceUpdate) — no
+    // secrets — so admin-claim access is sufficient. Without this block the
+    // admin panel's publish/delete silently failed under deny-by-default.
+    match /app_versions/{appId} {
+      allow read, write: if isAdmin();
+    }
+    match /app_versions/{appId}/releases/{version} {
+      allow read, write: if isAdmin();
+    }
+
+    // ── Servers / sync_queue: Admin SDK ONLY ───────────────
+    // `servers/{mac}` holds licenseKey + tunnelUrl. The SaaS booking relay
+    // (Community api/sync-to-local.js) POSTs the shared X-Sync-Token to
+    // whatever tunnelUrl says, so a client-writable tunnelUrl would let anyone
+    // holding the public Firebase web API key harvest that secret.
+    // The admin panel therefore reads it through /api/admin/servers (Admin SDK,
+    // platform-admin gated) instead of the client SDK. Same for sync_queue,
+    // whose client-side helpers in clinic-admin/src/services/sync.js are unused.
+    // No match block on purpose -> catch-all deny.
+
+    // ── Default: deny all other collections ───────────────────────
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

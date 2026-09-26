@@ -1,0 +1,45 @@
+# ─── Dependencies ────────────────────────────────────────────────────────────
+node_modules/
+
+# ─── Build output ────────────────────────────────────────────────────────────
+dist/
+src-tauri/target/
+*.tsbuildinfo
+
+# ─── Generated / staged build inputs ──────────────────────────────────────────
+# The bundled JRE is copied from a local JDK 21 by scripts/prepare-jre.mjs
+# (npm prebuild). It is ~330 MB and must never be committed.
+src-tauri/resources/jre/
+# The sidecar clinic-server JAR is built by the sibling repo and staged here.
+# Its path is version-pinned in tauri.conf.json; see scripts/sync-server-jar.mjs.
+src-tauri/resources/clinic-server-*.jar
+
+# Tauri regenerates these from tauri.conf.json / capabilities on build.
+src-tauri/gen/schemas/
+
+# ─── Local environment & secrets ─────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+
+# ─── Logs & diagnostics ───────────────────────────────────────────────────────
+*.log
+tsc-output.txt
+error-log.txt
+hs_err_pid*.log
+
+# ─── Local runtime artifacts ─────────────────────────────────────────────────
+# Sidecar server logs written under %APPDATA%\Zeyara, plus any stray DB files
+# that land in the repo root during manual testing.
+*.db
+*.mv.db
+*.trace.db
+clinic_server_license.json
+jwt-secret.key
+
+# ─── OS / editor noise ───────────────────────────────────────────────────────
+Thumbs.db
+.DS_Store
+.vscode/
+.idea/
+*.swp

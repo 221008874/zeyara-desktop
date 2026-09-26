@@ -1,0 +1,27 @@
+[package]
+name = "zeyara-desktop"
+version = "1.0.0"
+edition = "2021"
+
+[lib]
+name = "zeyara_desktop_lib"
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["devtools"] }
+tauri-plugin-shell = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+getrandom = "0.2"
+mac_address = "1.1"
+get_if_addrs = "0.5"
+tokio = { version = "1", features = ["full"] }
+hex = "0.4"
+hmac = "0.12"
+sha2 = "0.10"
+base64 = "0.22"
+hostname = "0.4"
+once_cell = "1.19"

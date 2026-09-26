@@ -1,0 +1,13 @@
+# backup of ziara-erp-wep taken 2026-09-26T07:30:59.080Z
+# release=projects/ziara-erp-wep/releases/cloud.firestore/default ruleset=projects/ziara-erp-wep/rulesets/16cd5dcf-9f6c-42b7-8bce-3a3ac97ddafd created=2026-06-21T16:53:46.013884Z
+# --- restore with: firebase deploy --only firestore:rules --project ziara-erp-wep
+# (after copying this content into firestore.rules)
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if request.auth != null;
+    }
+  }
+}
