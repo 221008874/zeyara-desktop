@@ -1,32 +1,15 @@
 import React, { useState } from 'react';
-import { invoke } from '@tauri-apps/api/core';
 import {
   TextField, Button, Typography, Box, Paper,
   Alert, CircularProgress,
 } from '@mui/material';
 import { useLicenseStore } from '../stores/license';
-import { isTauriApp } from '../lib/api';
 
 export const LicenseScreen: React.FC = () => {
   const { status, activate, check } = useLicenseStore();
   const [key, setKey] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [startingLocal, setStartingLocal] = useState(false);
-
-  const handleStartLocalServer = async () => {
-    if (!isTauriApp) return;
-    setStartingLocal(true);
-    setError(null);
-    try {
-      await invoke('start_server', { port: null });
-      window.location.reload();
-    } catch (err: any) {
-      setError(err?.message || 'تعذر تشغيل الخادم المحلي');
-    } finally {
-      setStartingLocal(false);
-    }
-  };
 
   const handleActivate = async () => {
     setLoading(true);
@@ -94,16 +77,9 @@ export const LicenseScreen: React.FC = () => {
         </Typography>
         {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
         {status?.serverOnline === false && (
-          <>
-            <Alert severity="warning" sx={{ mb: 2 }}>
-              لا يمكن الوصول إلى الخادم. تأكد من أن خادم العيادة يعمل.
-            </Alert>
-            {isTauriApp && (
-              <Button variant="outlined" fullWidth onClick={handleStartLocalServer} disabled={startingLocal} sx={{ mb: 2 }}>
-                {startingLocal ? <CircularProgress size={20} /> : 'تشغيل الخادم المحلي'}
-              </Button>
-            )}
-          </>
+          <Alert severity="warning" sx={{ mb: 2 }}>
+            لا يمكن الوصول إلى الخادم. تأكد من أن خادم العيادة يعمل وأن جهازك على نفس الشبكة.
+          </Alert>
         )}
         <TextField
           label="مفتاح الترخيص"

@@ -6,18 +6,13 @@ dist/
 src-tauri/target/
 *.tsbuildinfo
 
-# ─── Generated / staged build inputs ──────────────────────────────────────────
-# The bundled JRE is copied from a local JDK 21 by scripts/prepare-jre.mjs
-# (npm prebuild). It is ~330 MB and must never be committed.
-src-tauri/resources/jre/
-# The sidecar server JAR is built by the sibling clinic-server repo and staged
-# here as resources/clinic-server.jar by scripts/sync-server-jar.mjs
-# (run from npm prebuild). Both the staged name and any stray versioned copy
-# are ignored. See scripts/sync-server-jar.mjs.
-src-tauri/resources/clinic-server*.jar
-
+# ─── Generated build inputs ──────────────────────────────────────────────────
 # Tauri regenerates these from tauri.conf.json / capabilities on build.
 src-tauri/gen/schemas/
+
+# The installer contains no Java runtime and no server JAR. The Clinic Server is a
+# separate application on a separate machine, so there is nothing large to stage here.
+# Anything under src-tauri/resources/ appearing again is a mistake, not an input.
 
 # ─── Local environment & secrets ─────────────────────────────────────────────
 .env
@@ -31,8 +26,8 @@ error-log.txt
 hs_err_pid*.log
 
 # ─── Local runtime artifacts ─────────────────────────────────────────────────
-# Sidecar server logs written under %APPDATA%\Zeyara, plus any stray DB files
-# that land in the repo root during manual testing.
+# Stray database files that land in the repo root during manual testing. The app
+# itself keeps no local database.
 *.db
 *.mv.db
 *.trace.db

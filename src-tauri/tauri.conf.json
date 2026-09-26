@@ -31,7 +31,7 @@
     "targets": ["msi", "nsis"],
     "publisher": "Zeyara",
     "shortDescription": "Zeyara Clinic Management",
-    "longDescription": "Zeyara desktop app for clinic management: patients, appointments, expenses, money safe, reports, and notifications.",
+    "longDescription": "Zeyara desktop client for clinic management: patients, appointments, expenses, money safe, reports, and notifications. Connects to a Clinic Server on the clinic network. No local server or Java runtime is required.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -39,10 +39,6 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-  "resources": [
-    "resources/jre",
-    "resources/clinic-server.jar"
-  ],
     "createUpdaterArtifacts": false
   }
 }

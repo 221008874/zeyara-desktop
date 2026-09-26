@@ -7,19 +7,42 @@ const isTauriApp =
     (window as any).__TAURI_INTERNALS__ !== undefined ||
     (window as any).__TAURI__ !== undefined);
 
+/**
+ * No server is assumed up front.
+ *
+ * The Clinic Server is a separate application on a separate machine, so there is no
+ * "same machine" default to fall back on. An empty base URL makes the unconfigured state
+ * explicit, and the app then either adopts a discovered server or asks for one, instead
+ * of silently talking to a localhost nothing is listening on.
+ */
+const UNCONFIGURED = '';
+
 function getInitialBaseUrl(): string {
   if (typeof localStorage !== 'undefined') {
     const saved = localStorage.getItem('zeyara_server_config');
     if (saved) return saved;
   }
-  return isTauriApp ? 'http://localhost:8081' : '';
+  return UNCONFIGURED;
 }
 
 let BASE_URL = getInitialBaseUrl();
 
-/** Point all API/SSE calls at the given server (from heartbeat discovery). */
-export function setServerBaseUrl(host: string, port: number | string): void {
-  BASE_URL = `http://${host}:${port}`;
+/**
+ * Points all API/SSE calls at a server.
+ *
+ * Accepts a full origin so an HTTPS deployment can be used as-is; a bare host and port
+ * are treated as plain HTTP. Hard-coding `http://` here would make a TLS-terminating
+ * reverse proxy unreachable, because the page is served over a secure context and a
+ * mixed-content request would be blocked.
+ */
+export function setServerBaseUrl(host: string, port?: number | string): void {
+  const raw = String(host).trim();
+  if (/^https?:\/\//i.test(raw)) {
+    BASE_URL = raw.replace(/\/+$/, '');
+  } else {
+    const p = port === undefined || port === '' ? '' : `:${port}`;
+    BASE_URL = `http://${raw}${p}`;
+  }
   localStorage.setItem('zeyara_server_config', BASE_URL);
 }
 
@@ -27,9 +50,13 @@ export function getBaseUrl(): string {
   return BASE_URL;
 }
 
+export function isServerConfigured(): boolean {
+  return BASE_URL !== UNCONFIGURED;
+}
+
 export function resetServerBaseUrl(): void {
-  BASE_URL = isTauriApp ? 'http://localhost:8081' : '';
-  localStorage.setItem('zeyara_server_config', BASE_URL);
+  BASE_URL = UNCONFIGURED;
+  localStorage.removeItem('zeyara_server_config');
 }
 
 /**

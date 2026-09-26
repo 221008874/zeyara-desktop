@@ -4,19 +4,51 @@ import { useSettingsStore } from '../stores/settings';
 import { useAuthStore } from '../stores/auth';
 import { getBaseUrl, probeServer, resetServerBaseUrl, setServerBaseUrl } from '../lib/api';
 import { getAppVersion } from '../lib/version';
+import { useHeartbeatStore } from '../stores/heartbeat';
+import {
+  startHeartbeatMonitor,
+  stopHeartbeatMonitor,
+  forgetAcceptedServer,
+} from '../lib/heartbeat';
 
 export const SettingsPage: React.FC = () => {
   const { theme, setTheme, serverHost, serverPort, setServerConfig } = useSettingsStore();
   const { session, logout } = useAuthStore();
+  const discoverySecret = useHeartbeatStore((s) => s.discoverySecret);
+  const acceptedServer = useHeartbeatStore((s) => s.acceptedServer);
+  const setDiscoverySecret = useHeartbeatStore((s) => s.setDiscoverySecret);
   const [host, setHost] = React.useState(serverHost);
   const [port, setPort] = React.useState(serverPort);
   const [testResult, setTestResult] = React.useState<{ ok: boolean; text: string } | null>(null);
   const [testing, setTesting] = React.useState(false);
   const [version, setVersion] = React.useState('');
+  const [secretDraft, setSecretDraft] = React.useState('');
+  const [secretNotice, setSecretNotice] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     void getAppVersion().then(setVersion).catch(() => setVersion(''));
   }, []);
+
+  const handleSaveSecret = () => {
+    const value = secretDraft.trim();
+    if (!value) return;
+    setDiscoverySecret(value);
+    setSecretDraft('');
+    setSecretNotice('تم حفظ المفتاح. اضغط "تطبيق المفتاح وإعادة الاكتشاف" لتفعيله.');
+  };
+
+  // The secret is read once when the listener starts, so changing it means restarting
+  // discovery rather than expecting it to take effect on the next heartbeat.
+  const handleApplySecret = async () => {
+    await stopHeartbeatMonitor();
+    await startHeartbeatMonitor();
+    setSecretNotice('أُعيد تشغيل الاكتشاف بالمفتاح الجديد.');
+  };
+
+  const handleForgetServer = () => {
+    forgetAcceptedServer();
+    setSecretNotice('تم نسيان الخادم المعتمد. سيُطلب اختياره مرة أخرى عند الاكتشاف.');
+  };
 
   const refreshNotificationBus = () => {
     import('../lib/notificationBus')
@@ -75,21 +107,59 @@ export const SettingsPage: React.FC = () => {
       <Paper sx={{ p: 3, mb: 2 }}>
         <Typography variant="subtitle1" sx={{ mb: 2 }}>إعدادات الخادم</Typography>
         <Typography variant="caption" sx={{ display: 'block', mb: 2, color: '#6B7280' }}>
-          الخادم الحالي: {getBaseUrl()}
+          الخادم الحالي: {getBaseUrl() || '(غير محدد — يُكتشف تلقائياً أو يُضبط يدوياً)'}
         </Typography>
-        <TextField label="عنوان الخادم" value={host} onChange={(e) => setHost(e.target.value)} fullWidth size="small" sx={{ mb: 1 }} />
+        <TextField label="عنوان الخادم" value={host} onChange={(e) => setHost(e.target.value)} fullWidth size="small" sx={{ mb: 1 }} helperText="اتركه فارغاً للاكتشاف التلقائي. يمكنك لصق عنوان كامل مثل https://clinic.example.com" />
         <TextField label="المنفذ" value={port} onChange={(e) => setPort(e.target.value)} fullWidth size="small" sx={{ mb: 2 }} />
         <Box sx={{ display: 'flex', gap: 1 }}>
           <Button variant="outlined" onClick={handleTestConnection} disabled={testing}>
             {testing ? 'جاري الاختبار...' : 'اختبار الاتصال وتطبيقه'}
           </Button>
           <Button variant="text" onClick={handleResetServer}>
-            استعادة الافتراضي
+            مسح العنوان المحفوظ
           </Button>
         </Box>
         {testResult && (
           <Alert severity={testResult.ok ? 'success' : 'error'} sx={{ mt: 1 }}>
             {testResult.text}
+          </Alert>
+        )}
+      </Paper>
+
+      <Paper sx={{ p: 3, mb: 2 }}>
+        <Typography variant="subtitle1" sx={{ mb: 2 }}>اكتشاف الخادم والأمان</Typography>
+        <Typography variant="caption" sx={{ display: 'block', mb: 2, color: '#6B7280' }}>
+          خادم العيادة يعمل على جهاز منفصل. يتم التحقق من هويته عبر مفتاح مشترك
+          (SYNC_SECRET) موجود على إعدادات جهاز الخادم. بدون هذا المفتاح يمكن للاكتشاف أن
+          يجد الخادم، لكنه لا يستطيع التحقق من هويته، ولن يتم الاتصال به تلقائياً.
+        </Typography>
+        <TextField
+          label="مفتاح التحقق (SYNC_SECRET)"
+          type="password"
+          value={secretDraft}
+          onChange={(e) => setSecretDraft(e.target.value)}
+          fullWidth
+          size="small"
+          sx={{ mb: 2 }}
+          helperText="نفس القيمة الموجودة في إعدادات خادم العيادة. لا تشاركها."
+        />
+        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+          <Button variant="contained" onClick={handleSaveSecret} disabled={!secretDraft.trim()}>
+            حفظ المفتاح
+          </Button>
+          <Button variant="outlined" onClick={handleApplySecret} disabled={!discoverySecret}>
+            تطبيق المفتاح وإعادة الاكتشاف
+          </Button>
+          <Button variant="text" color="error" onClick={handleForgetServer}>
+            نسيان الخادم المعتمد
+          </Button>
+        </Box>
+        <Typography variant="caption" sx={{ display: 'block', mt: 2, color: '#6B7280' }}>
+          الخادم المعتمد حالياً: {acceptedServer || '(لا يوجد — سيتم طلب الاختيار عند الاكتشاف)'}
+        </Typography>
+        {secretNotice && (
+          <Alert severity="info" sx={{ mt: 1 }} onClose={() => setSecretNotice(null)}>
+            {secretNotice}
           </Alert>
         )}
       </Paper>

@@ -5,9 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "prebuild": "node scripts/prepare-jre.mjs && node scripts/sync-server-jar.mjs",
     "build": "tsc && vite build",
-    "sync-server": "node scripts/sync-server-jar.mjs",
     "import:javafox": "node --experimental-sqlite scripts/import-javafox-data.mjs",
     "typecheck": "tsc --noEmit",
     "contract:smoke": "node scripts/contract-smoke.mjs",

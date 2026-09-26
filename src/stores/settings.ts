@@ -21,7 +21,11 @@ export const useSettingsStore = create<SettingsState>()(
       language: 'ar',
       theme: 'light',
       direction: 'rtl',
-      serverHost: 'localhost',
+      // Intentionally blank. The Clinic Server runs on its own machine, so there is no
+      // sensible default host: a pre-filled "localhost" reads as "already configured"
+      // and hides an unconfigured client until a request fails with a confusing error.
+      // The port default is kept because 8081 is the server's documented port.
+      serverHost: '',
       serverPort: '8081',
 
       setLanguage: (lang) =>

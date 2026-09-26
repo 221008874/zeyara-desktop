@@ -1,5 +1,5 @@
 import React from 'react';
-import { AppBar, Toolbar, Typography, IconButton, Box, Avatar, Badge, Tooltip } from '@mui/material';
+import { AppBar, Toolbar, Typography, IconButton, Box, Avatar, Badge } from '@mui/material';
 import NotificationsIcon from '@mui/icons-material/Notifications';
 import DarkModeIcon from '@mui/icons-material/DarkMode';
 import LightModeIcon from '@mui/icons-material/LightMode';
@@ -11,8 +11,7 @@ import { useSettingsStore } from '../stores/settings';
 import { notificationBus } from '../lib/notificationBus';
 import { api } from '../lib/api';
 import { ConfirmDialog } from '../design-system/ConfirmDialog';
-import { useHeartbeat } from '../lib/heartbeat';
-import { isHeartbeatSupported } from '../lib/heartbeat';
+import HeartbeatIndicator from './HeartbeatIndicator';
 
 const pathLabels: Record<string, string> = {
   '/': 'لوحة التحكم',
@@ -43,54 +42,6 @@ const dynamicPathLabel = (pathname: string): string | null => {
   if (pathname === '/change-password') return 'تغيير كلمة المرور';
   if (pathname === '/dashboard') return 'لوحة التحكم';
   return null;
-};
-
-const HeartbeatIndicator: React.FC = () => {
-  const hb = useHeartbeat();
-
-  if (!isHeartbeatSupported()) return null;
-
-  const dotColor =
-    hb.status === 'online'
-      ? '#22C55E'
-      : hb.status === 'offline' || hb.status === 'error'
-        ? '#EF4444'
-        : hb.status === 'requires-trust'
-          ? '#F59E0B'
-          : '#9CA3AF';
-
-  const title =
-    hb.status === 'online' && hb.server
-      ? `متصل بالخادم: ${hb.server.name} (${hb.server.ip}:${hb.server.port})${hb.server.verified ? ' ✓ موثوق' : ' — غير موثوق'}`
-      : hb.status === 'offline'
-        ? 'الخادم غير متصل'
-        : hb.status === 'error'
-          ? `خطأ الخادم: ${hb.error}`
-          : hb.status === 'requires-trust'
-            ? `خادم غير موثوق: ${hb.server?.ip}:${hb.server?.port}`
-            : 'جاري البحث عن الخادم...';
-
-  return (
-    <Tooltip title={title} arrow>
-      <Box
-        sx={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 0.5,
-          px: 1,
-          py: 0.25,
-          borderRadius: 999,
-          bgcolor: 'rgba(0,0,0,0.04)',
-          cursor: 'default',
-        }}
-      >
-        <Box sx={{ width: 9, height: 9, borderRadius: '50%', bgcolor: dotColor }} />
-        <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-          {hb.status === 'online' ? 'متصل' : hb.status === 'offline' ? 'غير متصل' : '...'}
-        </Typography>
-      </Box>
-    </Tooltip>
-  );
 };
 
 export const TopBar: React.FC = () => {

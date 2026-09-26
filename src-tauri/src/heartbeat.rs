@@ -56,8 +56,11 @@ pub struct ServerInfo {
 pub struct HeartbeatState {
     pub online: bool,
     pub server: Option<ServerInfo>,
-    /// When online but the sender could not be verified (no shared secret).
-    pub requires_trust: bool,
+    /// Servers heard from but not adopted, awaiting an explicit operator decision.
+    pub candidates: Vec<ServerInfo>,
+    /// True when no shared secret is configured, so nothing on the LAN can be
+    /// authenticated and a discovered server cannot be trusted on its own.
+    pub unverified_mode: bool,
 }
 
 struct Listener {
@@ -67,7 +70,10 @@ struct Listener {
     state: Arc<Mutex<HeartbeatState>>,
     consecutive: Arc<Mutex<i64>>,
     last_beat: Arc<Mutex<SystemTime>>,
-    trust_pinned: Arc<Mutex<Option<String>>>, // ip:port pinned via TOFU
+    /// The operator-accepted server as "ip:port". Set only by an explicit
+    /// accept_discovered_server call, never inferred from whoever speaks first.
+    accepted: Arc<Mutex<Option<String>>>,
+    candidates: Arc<Mutex<Vec<ServerInfo>>>,
     last_seq: Arc<Mutex<i64>>,                // last accepted heartbeat sequence
     last_ts: Arc<Mutex<i64>>,                 // last accepted heartbeat timestamp
 }
@@ -119,6 +125,52 @@ fn verify_signature(secret: &[u8], hb: &HeartbeatMessage) -> bool {
     constant_time_eq(&expected, &hb.signature)
 }
 
+/// What to do with an incoming heartbeat.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Action {
+    /// Discard without comment. Never surfaced to the UI.
+    Reject,
+    /// Record as a candidate and ask the operator.
+    OfferCandidate,
+    /// Authentic enough to drive the connection.
+    GoOnline,
+}
+
+/// The trust decision, isolated from I/O so it can be tested directly.
+///
+/// This is the security-critical part of discovery, so it is a pure function rather than
+/// logic tangled into the socket loop.
+pub fn classify(
+    has_secret: bool,
+    verified: bool,
+    accepted: Option<&str>,
+    key: &str,
+) -> Action {
+    // With a shared secret the HMAC is the only way in. A packet that fails it is
+    // dropped without comment: reporting it as "a server awaiting approval" would hand an
+    // attacker a prompt the operator might click.
+    if has_secret && !verified {
+        return Action::Reject;
+    }
+
+    // Without a shared secret nothing can be authenticated, so a packet must never put
+    // the client online by itself. The previous trust-on-first-use behaviour pinned
+    // whoever spoke first and then reported the client online against an unverified peer
+    // - and because the pin was per-start(), any machine on the LAN could win that race
+    // again on every launch.
+    if !has_secret {
+        return Action::OfferCandidate;
+    }
+
+    // Authenticated, but the operator already accepted a different server. A second valid
+    // server is either a second clinic or a misconfiguration; either way it must not
+    // silently take over the connection.
+    match accepted {
+        Some(acc) if acc != key => Action::OfferCandidate,
+        _ => Action::GoOnline,
+    }
+}
+
 impl Listener {
     fn verify(&self, hb: &HeartbeatMessage) -> bool {
         match self.secret.as_ref() {
@@ -167,42 +219,64 @@ impl Listener {
         Some(parsed)
     }
 
+    /// Records a server we are not adopting and tells the UI about it.
+    ///
+    /// Kept as a list rather than a single slot: a clinic LAN can legitimately host
+    /// more than one Clinic Server, and silently keeping only the most recent one would
+    /// make the choice depend on packet timing.
+    fn offer_candidate(&self, hb: &HeartbeatMessage, verified: bool) {
+        let info = ServerInfo {
+            ip: hb.server_ip.clone(),
+            port: hb.server_port,
+            name: hb.server_name.clone(),
+            verified,
+            last_seen_at: now_millis(),
+        };
+        let key = format!("{}:{}", info.ip, info.port);
+
+        let snapshot = {
+            let mut cands = self.candidates.lock().unwrap();
+            match cands.iter_mut().find(|c| c.ip == info.ip && c.port == info.port) {
+                Some(existing) => {
+                    // Refresh liveness and upgrade the flag if it became verifiable.
+                    existing.last_seen_at = info.last_seen_at;
+                    existing.verified = existing.verified || info.verified;
+                }
+                None => {
+                    // Bound the list so a flood of forged packets cannot grow it forever.
+                    if cands.len() >= 16 {
+                        cands.remove(0);
+                    }
+                    cands.push(info.clone());
+                }
+            }
+            let _ = key;
+            cands.clone()
+        };
+
+        self.state.lock().unwrap().candidates = snapshot.clone();
+        let _ = self.app.emit("heartbeat://candidates", &snapshot);
+    }
+
     fn on_heartbeat(&self, hb: HeartbeatMessage) {
+        let has_secret = matches!(self.secret.as_ref(), Some(s) if !s.is_empty());
         let verified = self.verify(&hb);
         let key = format!("{}:{}", hb.server_ip, hb.server_port);
 
-        let mut pinned = self.trust_pinned.lock().unwrap();
-        let mut state = self.state.lock().unwrap();
-
-        let has_secret = matches!(self.secret.as_ref(), Some(s) if !s.is_empty());
-        let trust_ok = if has_secret {
-            // A shared secret is configured: the HMAC signature MUST validate.
-            verified
-        } else {
-            // TOFU: first-ever sender is pinned; later different senders need trust.
-            match pinned.as_deref() {
-                None => {
-                    *pinned = Some(key.clone());
-                    true
+        {
+            let accepted = self.accepted.lock().unwrap();
+            match classify(has_secret, verified, accepted.as_deref(), &key) {
+                Action::Reject => return,
+                Action::OfferCandidate => {
+                    drop(accepted);
+                    self.offer_candidate(&hb, verified);
+                    return;
                 }
-                Some(p) if *p == key => true,
-                Some(_) => false,
+                Action::GoOnline => {}
             }
-        };
-
-        if !trust_ok {
-            // A new, unverified server is speaking; surface it for a trust decision.
-            let _ = self.app.emit("heartbeat://requires-trust", &ServerInfo {
-                ip: hb.server_ip,
-                port: hb.server_port,
-                name: hb.server_name,
-                verified: false,
-                last_seen_at: now_millis(),
-            });
-            return;
         }
 
-        // Reject replayed / duplicate packets inside the freshness window.
+        // Reject replays before anything else touches shared state.
         {
             let mut last_seq = self.last_seq.lock().unwrap();
             let mut last_ts = self.last_ts.lock().unwrap();
@@ -212,6 +286,8 @@ impl Listener {
             *last_seq = hb.sequence;
             *last_ts = hb.timestamp;
         }
+
+        let mut state = self.state.lock().unwrap();
 
         *self.last_beat.lock().unwrap() = SystemTime::now();
 
@@ -231,7 +307,6 @@ impl Listener {
 
         if *consecutive >= ONLINE_CONSECUTIVE {
             state.online = true;
-            state.requires_trust = false;
             state.server = Some(info.clone());
         }
 
@@ -273,6 +348,9 @@ fn constant_time_eq(a: &str, b: &str) -> bool {
 pub struct HeartbeatController {
     running: Arc<AtomicBool>,
     state: Arc<Mutex<HeartbeatState>>,
+    /// Shared with the running listener so `accept()` can record the operator's
+    /// decision without restarting discovery.
+    accepted: Arc<Mutex<Option<String>>>,
     handle: Arc<Mutex<Option<std::thread::JoinHandle<()>>>>,
 }
 
@@ -283,13 +361,20 @@ impl HeartbeatController {
             state: Arc::new(Mutex::new(HeartbeatState {
                 online: false,
                 server: None,
-                requires_trust: false,
+                candidates: Vec::new(),
+                unverified_mode: false,
             })),
+            accepted: Arc::new(Mutex::new(None)),
             handle: Arc::new(Mutex::new(None)),
         }
     }
 
-    pub fn start(&self, app: tauri::AppHandle, secret: Option<String>) -> Result<(), String> {
+    pub fn start(
+        &self,
+        app: tauri::AppHandle,
+        secret: Option<String>,
+        accepted: Option<String>,
+    ) -> Result<(), String> {
         let mut handle = self.handle.lock().unwrap();
         if handle.is_some() {
             return Err("heartbeat listener already running".into());
@@ -297,6 +382,17 @@ impl HeartbeatController {
 
         let secret = secret.filter(|s| !s.is_empty());
         let secret_bytes = secret.as_ref().map(|s| s.as_bytes().to_vec());
+
+        if let Some(acc) = accepted.filter(|s| !s.is_empty()) {
+            *self.accepted.lock().unwrap() = Some(acc);
+        }
+
+        {
+            let mut st = self.state.lock().unwrap();
+            st.unverified_mode = secret.is_none();
+            st.candidates.clear();
+        }
+
         let listener = Listener {
             app: app.clone(),
             secret: Arc::new(secret_bytes),
@@ -304,7 +400,8 @@ impl HeartbeatController {
             state: self.state.clone(),
             consecutive: Arc::new(Mutex::new(0)),
             last_beat: Arc::new(Mutex::new(SystemTime::now())),
-            trust_pinned: Arc::new(Mutex::new(None)),
+            accepted: self.accepted.clone(),
+            candidates: Arc::new(Mutex::new(Vec::new())),
             last_seq: Arc::new(Mutex::new(0)),
             last_ts: Arc::new(Mutex::new(0)),
         };
@@ -319,6 +416,17 @@ impl HeartbeatController {
         Ok(())
     }
 
+    /// Records the operator's decision to trust a specific server.
+    ///
+    /// Without a shared secret this does not make the peer authenticated - nothing can -
+    /// it only stops the client from re-asking on every heartbeat. It is persisted by
+    /// the frontend so the decision survives a restart.
+    pub fn accept(&self, ip: String, port: u16) {
+        *self.accepted.lock().unwrap() = Some(format!("{}:{}", ip, port));
+        let mut st = self.state.lock().unwrap();
+        st.candidates.retain(|c| !(c.ip == ip && c.port == port));
+    }
+
     pub fn stop(&self) {
         self.running.store(false, Ordering::SeqCst);
         if let Some(h) = self.handle.lock().unwrap().take() {
@@ -327,7 +435,7 @@ impl HeartbeatController {
         let mut st = self.state.lock().unwrap();
         st.online = false;
         st.server = None;
-        st.requires_trust = false;
+        st.candidates.clear();
     }
 
     pub fn state(&self) -> HeartbeatState {
@@ -411,8 +519,49 @@ mod tests {
     }
 
     #[test]
-    fn parses_real_heartbeat_shape() {
-        let hb: HeartbeatMessage = serde_json::from_str(
+    fn trust_policy_rejects_a_bad_signature_without_asking_the_operator() {
+        // The dangerous case: a forger must not be able to render a "please trust this
+        // server" prompt by sending an unsigned or wrongly-signed packet.
+        assert_eq!(classify(true, false, None, "10.0.0.1:8081"), Action::Reject);
+        assert_eq!(
+            classify(true, false, Some("192.168.1.8:8081"), "10.0.0.1:8081"),
+            Action::Reject
+        );
+    }
+
+    #[test]
+    fn trust_policy_never_goes_online_without_a_secret() {
+        // No shared secret means no authentication is possible, so even a well-formed
+        // packet may only be offered. This is the regression that let a spoofed server
+        // drive the client on every launch.
+        assert_eq!(classify(false, false, None, "10.0.0.1:8081"), Action::OfferCandidate);
+        assert_eq!(
+            classify(false, false, Some("10.0.0.1:8081"), "10.0.0.1:8081"),
+            Action::OfferCandidate
+        );
+    }
+
+    #[test]
+    fn trust_policy_admits_a_verified_server() {
+        assert_eq!(classify(true, true, None, "192.168.1.8:8081"), Action::GoOnline);
+        assert_eq!(
+            classify(true, true, Some("192.168.1.8:8081"), "192.168.1.8:8081"),
+            Action::GoOnline
+        );
+    }
+
+    #[test]
+    fn trust_policy_asks_before_switching_to_a_second_server() {
+        // Two valid servers on one LAN is either two clinics or a misconfiguration. It
+        // must never silently take over the existing connection.
+        assert_eq!(
+            classify(true, true, Some("192.168.1.8:8081"), "192.168.1.20:8081"),
+            Action::OfferCandidate
+        );
+    }
+
+    #[test]
+    fn parses_real_heartbeat_shape() {        let hb: HeartbeatMessage = serde_json::from_str(
             r#"{"type":"HEARTBEAT","serverIp":"192.168.1.8","serverPort":8081,"serverName":"ClinicServer","timestamp":1786255423892,"status":"ONLINE","sequence":1,"nonce":"fa7492b3-6ad7-4acf-9a5f-1c6a696be93c","signature":"x"}"#,
         )
         .expect("fixture must parse");

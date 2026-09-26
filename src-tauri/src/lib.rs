@@ -1,14 +1,9 @@
+mod device;
 mod documents;
 mod heartbeat;
-mod server;
 
 use tauri::{Emitter, Manager, WindowEvent};
 
-struct DiscoveredServer(std::sync::Mutex<Option<String>>);
-
-/// Guards against a close-request that never receives a matching `finish_close`.
-/// If the frontend doesn't run the backup and finish within the timeout, we
-/// force-close so the user is never stuck with a window that cannot close.
 const CLOSE_TIMEOUT_SECS: u64 = 20;
 
 #[tauri::command]
@@ -20,16 +15,6 @@ async fn finish_close(
         .ok_or_else(|| "window not found".to_string())?;
     let _ = window.destroy();
     Ok(())
-}
-
-#[tauri::command]
-async fn get_device_fingerprint() -> Result<String, String> {
-    let mac = mac_address::get_mac_address()
-        .ok()
-        .flatten()
-        .map(|m| m.to_string())
-        .unwrap_or_default();
-    Ok(mac)
 }
 
 #[tauri::command]
@@ -49,15 +34,15 @@ async fn get_network_interfaces() -> Result<Vec<String>, String> {
 async fn start_heartbeat_monitor(
     app: tauri::AppHandle,
     secret: Option<String>,
+    accepted: Option<String>,
 ) -> Result<(), String> {
     let ctrl = app.state::<heartbeat::HeartbeatController>();
     let app = app.clone();
-    // Fall back to the shared SYNC_SECRET env var (same source the server uses).
     let secret = match secret {
         Some(s) if !s.is_empty() => Some(s),
         _ => std::env::var("SYNC_SECRET").ok(),
     };
-    ctrl.start(app, secret)
+    ctrl.start(app, secret, accepted)
 }
 
 #[tauri::command]
@@ -68,12 +53,22 @@ async fn stop_heartbeat_monitor(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+async fn accept_discovered_server(
+    app: tauri::AppHandle,
+    ip: String,
+    port: u16,
+) -> Result<(), String> {
+    let ctrl = app.state::<heartbeat::HeartbeatController>();
+    ctrl.accept(ip, port);
+    Ok(())
+}
+
+#[tauri::command]
 async fn get_heartbeat_state(app: tauri::AppHandle) -> Result<heartbeat::HeartbeatState, String> {
     let ctrl = app.state::<heartbeat::HeartbeatController>();
     Ok(ctrl.state())
 }
 
-#[cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 pub fn run() {
     tauri::Builder::default()
         // Native capabilities used by the client (Phase 6):
@@ -86,7 +81,6 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
-        .manage(DiscoveredServer(std::sync::Mutex::new(None)))
         .manage(heartbeat::HeartbeatController::new())
         .on_window_event(|window, event| {
             // Intercept close requests so the frontend can run an async
@@ -108,21 +102,14 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             documents::save_document,
-            get_device_fingerprint,
+            device::get_device_fingerprint,
             get_network_interfaces,
             start_heartbeat_monitor,
             stop_heartbeat_monitor,
             get_heartbeat_state,
+            accept_discovered_server,
             finish_close,
-            server::get_system_info,
-            server::get_device_fingerprint_composite,
-            server::get_server_state,
-            server::start_server,
-            server::stop_server,
-            server::restart_server,
-            server::get_server_logs,
-            server::check_firewall,
-            server::fix_firewall,
+            device::get_device_fingerprint,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
