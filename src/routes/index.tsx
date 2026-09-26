@@ -22,6 +22,7 @@ import { SettingsPage } from '../pages/SettingsPage';
 import { SchedulePage } from '../pages/SchedulePage';
 import { FinancialPage } from '../pages/FinancialPage';
 import { MoneySafePage } from '../pages/MoneySafePage';
+import { OutstandingBalancesPage } from '../pages/OutstandingBalancesPage';
 import { ReportsPage } from '../pages/ReportsPage';
 import { MedicationsPage } from '../pages/MedicationsPage';
 import { HistoryPage } from '../pages/HistoryPage';
@@ -132,6 +133,7 @@ export function AppRoutes() {
                     <Route path="schedule" element={<RoleGuard roles={['ADMIN', 'DOCTOR']}><SchedulePage /></RoleGuard>} />
                     <Route path="financial" element={<RoleGuard roles={['ADMIN', 'DOCTOR']}><FinancialPage /></RoleGuard>} />
                     <Route path="money-safe" element={<RoleGuard roles={['ADMIN', 'DOCTOR']}><MoneySafePage /></RoleGuard>} />
+        <Route path="outstanding" element={<RoleGuard roles={['ADMIN', 'DOCTOR', 'SECRETARY']}><OutstandingBalancesPage /></RoleGuard>} />
                     <Route path="reports" element={<RoleGuard roles={['ADMIN', 'DOCTOR']}><ReportsPage /></RoleGuard>} />
                     <Route path="medications" element={<RoleGuard roles={['ADMIN', 'DOCTOR']}><MedicationsPage /></RoleGuard>} />
                     <Route path="history" element={<RoleGuard roles={['ADMIN', 'DOCTOR']}><HistoryPage /></RoleGuard>} />

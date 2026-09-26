@@ -8,6 +8,7 @@ import CalendarTodayIcon from '@mui/icons-material/CalendarToday';
 import AccountBalanceWalletIcon from '@mui/icons-material/AccountBalanceWallet';
 import LockIcon from '@mui/icons-material/Lock';
 import PaymentsIcon from '@mui/icons-material/Payments';
+import PaidIcon from '@mui/icons-material/Paid';
 import WbSunnyIcon from '@mui/icons-material/WbSunny';
 import AssessmentIcon from '@mui/icons-material/Assessment';
 import MedicationIcon from '@mui/icons-material/Medication';
@@ -44,6 +45,7 @@ const allNavItems: NavItem[] = [
   { label: 'الجدول الزمني', path: '/schedule', icon: CalendarTodayIcon, roles: ['ADMIN', 'DOCTOR'] },
   { label: 'المالية', path: '/financial', icon: AccountBalanceWalletIcon, roles: ['ADMIN', 'DOCTOR'] },
   { label: 'خزينة المال', path: '/money-safe', icon: LockIcon, roles: ['ADMIN', 'DOCTOR'] },
+    { label: 'المبالغ المستحقة', path: '/outstanding', icon: PaidIcon, roles: ['ADMIN', 'DOCTOR', 'SECRETARY'] },
   { label: 'المصروفات', path: '/expenses', icon: PaymentsIcon, roles: ['ADMIN', 'DOCTOR', 'SECRETARY'] },
   { label: 'الحجوزات الإلكترونية', path: '/online-bookings', icon: WbSunnyIcon, roles: ['ADMIN', 'SECRETARY'] },
   { label: 'التقارير', path: '/reports', icon: AssessmentIcon, roles: ['ADMIN', 'DOCTOR'] },

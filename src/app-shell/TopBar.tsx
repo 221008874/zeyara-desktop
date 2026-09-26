@@ -21,6 +21,7 @@ const pathLabels: Record<string, string> = {
   '/schedule': 'الجدول الزمني',
   '/financial': 'المالية',
   '/money-safe': 'خزينة المال',
+    '/outstanding': 'المبالغ المستحقة',
   '/expenses': 'المصروفات',
   '/online-bookings': 'الحجوزات الإلكترونية',
   '/profile': 'تحديث البيانات',
