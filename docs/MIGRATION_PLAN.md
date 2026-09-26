@@ -97,18 +97,19 @@ The importer `scripts/import-javafox-data.mjs` repairs the data bugs during migr
 | 5 | Server remains source of truth | MET | — |
 | 6 | Important DR workflows | PARTIAL | media, quick-pay |
 | 7 | Important Secretary workflows | PARTIAL | quick-pay, media |
-| 8 | Printing / files / native | **UNMET** | Phase 6 |
-| 9 | Discovery works securely | **UNMET** | Phase 7 |
+| 8 | Printing / files / native | **MET** | Phase 6 done: native save dialog, open/reveal, OS notifications |
+| 9 | Discovery works securely | **MET** | Phase 7 done: strict HMAC, no TOFU, explicit ADMIN approval |
 | 10 | Manual server config | MET | — |
 | 11 | Auth / session expiry | MET | — |
-| 12 | Production HTTPS | **UNMET** | Phase 8 |
-| 13 | Signed updates | **UNMET** | Phase 9 |
+| 12 | Production HTTPS | **UNMET** | Phase 8 - CSP still allows http: |
+| 13 | Signed updates | **UNMET** | Phase 9 - no signing key yet |
 | 14 | No duplicated connection/auth/update impls | MET | — |
-| 15 | Backend tests pass | MET | 246/246 |
-| 16 | Frontend tests for migrated flows | **UNMET** | test framework absent |
-| 17 | Production Windows installer | **UNMET** | packaging blockers |
+| 15 | Backend tests pass | MET | 261/261 (246 + 15 new) |
+| 16 | Frontend tests for migrated flows | **PARTIAL** | vitest added, 58 tests; page-level tests still to come |
+| 17 | Production Windows installer | **PARTIAL** | 5.33 MB NSIS installer built and verified clean of Java; not yet run on a clean machine |
 
-**7 of 17 unmet. Three of them (8, 13, 17) need no backend work.**
+**2 of 17 unmet (HTTPS, signed updates), 2 partial (frontend test depth, clean-machine
+installer run).** All of them are client-side work; none requires a backend change.
 
 ---
 
@@ -171,10 +172,10 @@ Each phase keeps the project buildable.
 | 4 | Secretary parity: quick-pay, expired-followup payment, bulk zone cancel, cancelled-zone list, payment mutation semantics | AC 7 |
 | 5 | Doctor parity: verify consultation, diagnosis/prescription, notes, medication stop/reactivate, attachments | AC 6 |
 | 6 | Native: `dialog`, `opener`, `notification` plugins; least-privilege capabilities; wire PDF/CSV/XLSX to a native save; open-file actions | AC 8 |
-| 7 | Discovery: make the shared secret reachable by the app process so HMAC actually verifies; TOFU must be explicit and warned | AC 9 |
-| 8 | HTTPS: CSP split dev/prod, reject plain-HTTP non-loopback in release builds, document the proxy | AC 12 |
-| 9 | Updater: `createUpdaterArtifacts: true`, minisign key, signed MSI + NSIS, install, restart, failed-update handling | AC 13 |
-| 10 | Packaging: `jlink` the JRE, fix the orphaned JVM, auto-start the sidecar, drop `devtools` from release, prove an MSI build; add the test framework and cover the migrated flows | AC 16, 17 |
+| 7 | Discovery: deliver the shared secret from settings so HMAC verifies; no trust-on-first-use; explicit operator acceptance | AC 9 — **done** |
+| 8 | Printing / files / native | **MET** | Phase 6 done: native save dialog, open/reveal, OS notifications |
+| 9 | Discovery works securely | **MET** | Phase 7 done: strict HMAC, no TOFU, explicit ADMIN approval |
+| 10 | Packaging: verify the installer on a clean machine with no Java and no Clinic Server; drop `devtools` from release | AC 17 — **installer built at 5.33 MB** |
 | — | Backend §4.1 + §4.2 alongside the phases that need them | D1, D8 |
 
 Phase 10 removal of the JavaFX deployment path happens only after parity verification.
@@ -182,15 +183,82 @@ The old repositories stay until then.
 
 ---
 
-## 6. Known packaging risks
+## 6. Deployment model
 
-| Risk | Detail |
+```text
+                 Clinic LAN
+────────────────────────────────────────────
+
+┌───────────────────────┐
+│ Clinic Server Machine │
+│                       │
+│ Clinic Server         │
+│ Spring Boot           │
+│ Port 8081             │
+└───────────┬───────────┘
+            │
+       LAN / HTTPS
+            │
+    ┌───────┴────────┐
+    │                │
+┌───▼────────┐ ┌─────▼───────┐
+│ Tauri      │ │ Tauri       │
+│ Doctor PC  │ │ Secretary PC│
+└────────────┘ └─────────────┘
+```
+
+**The Clinic Server is NOT part of the Tauri application.** It is installed and run
+separately. The client contains no Java runtime, no server JAR, and no code that starts,
+stops, or supervises a server process. Closing the client has no effect on the server,
+and the client's lifecycle is completely independent.
+
+An earlier revision of this plan had the server bundled as a sidecar and listed the
+resulting 463 MB installer and orphaned-JVM behaviour as risks to be fixed. That was the
+wrong model, not a defect to repair. Removed in `db8a2af`.
+
+### Installer contents
+
+```text
+Zeyara Desktop
+├── React frontend
+├── Tauri application
+└── required Tauri/native dependencies
+```
+
+Measured: **5.33 MB** NSIS installer, no `java.exe`, no server JAR. The client is built
+and installed with no Java and no Clinic Server present on the machine.
+
+### Connection model
+
+1. Discover Clinic Server on the LAN (UDP 8888, HMAC-SHA256 verified).
+2. Present any discovered-but-unaccepted server for explicit ADMIN approval.
+3. Connect to the configured server URL.
+4. Allow manual server URL configuration, including a full `https://` origin.
+5. Show connection/health status.
+6. Authenticate against Clinic Server for all Doctor and Secretary workflows.
+
+The client starts **unconfigured** — there is no `localhost` default, because there is no
+same-machine server to fall back on. It adopts a discovered server or an entered URL.
+
+### Discovery trust policy
+
+The HMAC is byte-compatible with `HeartbeatService.java` (`HmacSHA256` over
+`v2:{timestamp}:{nonce}:{ip}:{port}:{name}:{sequence}`, standard Base64, secret from the
+server's `SYNC_SECRET`).
+
+| Situation | Behaviour |
 |---|---|
-| Full JDK bundled | ~330 MB, ships `javac`/`jpackage`/60 `.jmod`s. Should be a `jlink` runtime image. |
-| Orphaned JVM | `start_server` spawns into a `once_cell` static with no `Drop`; closing the app leaves `java.exe` holding the port and the H2 lock, so the next launch reports `mode: remote` and cannot start. |
-| Sidecar never auto-starts | Only the license screen and Server Manager start it. A fresh install must press Start. |
-| Random admin password | Regenerated per launch when absent from env/`.env`, and never surfaced in the UI. |
-| `devtools` in release | Unconditional in `Cargo.toml`. |
-| No code signing | `publisher: "Zeyara"` only fills the MSI property table. |
-| `strictPort` dev loop | `npm run dev` currently fails with "Port 5173 already in use". |
-| Client fingerprint mismatch | Tauri sends a bare MAC address; the unused composite command (wmic UUID + disk serial) is what the server's license binding expects. |
+| Secret configured, signature invalid | Packet dropped silently. Never offered to the operator — otherwise a forger gets a prompt someone might click. |
+| Secret configured, signature valid, accepted server | Client goes online. |
+| Secret configured, signature valid, **different** server | Offered as a candidate. A second valid server is a second clinic or a misconfiguration; it never silently takes over. |
+| **No secret configured** | Nothing is ever adopted automatically, whatever the packet claims. Offered for explicit approval, with the unverified state stated plainly. |
+
+The operator's acceptance is persisted, so the prompt does not repeat on every launch.
+Candidates are a **list**, so a multi-server LAN is a decision rather than a race. Only an
+ADMIN may approve, because approving redirects every subsequent request in the app.
+
+The secret is entered in Settings and passed to the listener. It is not read from the
+environment: the server is on another machine, so there is no shared environment. It is
+stored in `localStorage` alongside the server URL — the same place the session token
+already lives. That is a deliberate, documented trade-off, not an oversight.
+
