@@ -10,9 +10,11 @@ src-tauri/target/
 # The bundled JRE is copied from a local JDK 21 by scripts/prepare-jre.mjs
 # (npm prebuild). It is ~330 MB and must never be committed.
 src-tauri/resources/jre/
-# The sidecar clinic-server JAR is built by the sibling repo and staged here.
-# Its path is version-pinned in tauri.conf.json; see scripts/sync-server-jar.mjs.
-src-tauri/resources/clinic-server-*.jar
+# The sidecar server JAR is built by the sibling clinic-server repo and staged
+# here as resources/clinic-server.jar by scripts/sync-server-jar.mjs
+# (run from npm prebuild). Both the staged name and any stray versioned copy
+# are ignored. See scripts/sync-server-jar.mjs.
+src-tauri/resources/clinic-server*.jar
 
 # Tauri regenerates these from tauri.conf.json / capabilities on build.
 src-tauri/gen/schemas/

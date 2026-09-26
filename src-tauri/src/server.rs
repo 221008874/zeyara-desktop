@@ -123,23 +123,58 @@ fn get_device_fingerprint() -> String {
     get_mac()
 }
 
+/// Reads `KEY=value` from a server `.env` file, if one is reachable.
+///
+/// The lookup walks the same dev-relative locations as the JAR search instead of
+/// a hardcoded `D:\proj\...` path, so it works in any checkout and is inert
+/// (returns `None`) in a packaged install.
+fn server_env_value(key: &str) -> Option<String> {
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    if let Ok(manifest) = std::env::var("CARGO_MANIFEST_DIR") {
+        let manifest = PathBuf::from(manifest);
+        if let Some(root) = manifest.parent() {
+            dirs.push(root.join("Server/clinic-server"));
+            dirs.push(root.join("clinic-server"));
+        }
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            for up in ["..", "../..", "../../.."] {
+                dirs.push(dir.join(up).join("Server/clinic-server"));
+            }
+        }
+    }
+
+    for dir in dirs {
+        let Ok(content) = std::fs::read_to_string(dir.join(".env")) else {
+            continue;
+        };
+        if let Some(value) = content.lines().find_map(|line| {
+            let value = line.trim().strip_prefix(&format!("{}=", key))?.trim();
+            if value.is_empty() {
+                None
+            } else {
+                Some(value.to_string())
+            }
+        }) {
+            return Some(value);
+        }
+    }
+    None
+}
+
 fn configured_admin_password() -> Option<String> {
     std::env::var("ADMIN_PASSWORD")
         .ok()
         .filter(|value| !value.is_empty() && value != "admin123" && value != "CHANGE_ME_ADMIN_SET_VIA_ENV")
-        .or_else(|| {
-            let content = std::fs::read_to_string(r"D:\proj\Server\clinic-server\.env").ok()?;
-            content.lines().find_map(|line| {
-                let value = line.strip_prefix("ADMIN_PASSWORD=")?.trim();
-                if value.is_empty() { None } else { Some(value.to_string()) }
-            })
-        })
+        .or_else(|| server_env_value("ADMIN_PASSWORD"))
 }
 
 fn configured_sync_secret() -> Option<String> {
     std::env::var("SYNC_SECRET")
         .ok()
         .filter(|value| !value.is_empty())
+        .or_else(|| server_env_value("SYNC_SECRET"))
 }
 
 fn generated_admin_password() -> String {
@@ -190,28 +225,146 @@ fn is_port_open(port: u16) -> bool {
     .is_ok()
 }
 
-fn get_app_dir() -> PathBuf {
-    // Try to find clinic-server jar next to exe or in dev
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            // Check for jar in various locations
-            let candidates = [
-                dir.join("clinic-server-1.7.0.jar"),
-                dir.join("resources").join("clinic-server-1.7.0.jar"),
-                dir.join("_up_/Server/clinic-server/target/clinic-server-1.7.0.jar"),
-                dir.join("_up_/_up_/Server/clinic-server/target/clinic-server-1.7.0.jar"),
-                dir.join("../clinic-server/target/clinic-server-1.7.0.jar"),
-                PathBuf::from(r"D:\proj\Server\clinic-server\target\clinic-server-1.7.0.jar"),
-            ];
-            for c in &candidates {
-                if c.exists() {
-                    return c.clone();
-                }
-            }
-            return dir.to_path_buf();
+/// Stable, un-versioned name the build stages the sidecar JAR under
+/// (`src-tauri/resources/clinic-server.jar`, bundled via tauri.conf.json). Using a
+/// fixed name means the Tauri resource list never has to be edited on a version bump.
+const SERVER_JAR_STABLE: &str = "clinic-server.jar";
+/// Versioned name pattern used by the server repo's Maven output,
+/// e.g. `clinic-server-1.7.0.jar`. Preferred over nothing, but ranked below the
+/// staged name so a stale copy in the same folder cannot shadow it.
+const SERVER_JAR_PREFIX: &str = "clinic-server-";
+const SERVER_JAR_SUFFIX: &str = ".jar";
+
+/// Ranks a candidate JAR so the best one can be chosen without hardcoding a version.
+///
+/// Returns `None` for files that are not server JARs. The stable staged name ranks
+/// above any versioned build; among versioned builds the highest version wins.
+fn jar_rank(path: &std::path::Path) -> Option<(u8, Vec<u64>)> {
+    let name = path.file_name()?.to_str()?;
+
+    if name.eq_ignore_ascii_case(SERVER_JAR_STABLE) {
+        return Some((1, Vec::new()));
+    }
+
+    let rest = name.strip_prefix(SERVER_JAR_PREFIX)?;
+    let version = rest.strip_suffix(SERVER_JAR_SUFFIX)?;
+    if version.is_empty() {
+        return None;
+    }
+
+    // Take the leading dotted-numeric run so qualifiers like `-SNAPSHOT` or
+    // `-rc1` are tolerated rather than rejected.
+    let numeric: String = version
+        .chars()
+        .take_while(|c| c.is_ascii_digit() || *c == '.')
+        .collect();
+    if numeric.is_empty() {
+        return None;
+    }
+    let parts: Vec<u64> = numeric
+        .split('.')
+        .filter(|p| !p.is_empty())
+        .map(|p| p.parse::<u64>().unwrap_or(0))
+        .collect();
+    if parts.is_empty() {
+        return None;
+    }
+    Some((0, parts))
+}
+
+/// Returns the best `clinic-server*.jar` found in `dir`, if any.
+fn newest_jar_in(dir: &std::path::Path) -> Option<PathBuf> {
+    let entries = std::fs::read_dir(dir).ok()?;
+    let mut best: Option<((u8, Vec<u64>), PathBuf)> = None;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let Some(rank) = jar_rank(&path) else {
+            continue;
+        };
+        let better = match &best {
+            Some((current, _)) => rank > *current,
+            None => true,
+        };
+        if better {
+            best = Some((rank, path));
         }
     }
-    PathBuf::from(r"D:\proj\Server\clinic-server\target\clinic-server-1.7.0.jar")
+    best.map(|(_, path)| path)
+}
+
+/// Directories that may contain the sidecar server JAR, in priority order.
+///
+/// Production layout (Tauri bundle): the JAR is a bundled resource, so it sits
+/// either beside the executable or under `resources/`. Development layout: the
+/// JAR is built by the sibling `clinic-server` repo, so it is found relative to
+/// this crate rather than via a hardcoded absolute path.
+fn server_jar_search_dirs() -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = Vec::new();
+
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            dirs.push(dir.to_path_buf());
+            dirs.push(dir.join("resources"));
+            // Dev convenience when running the webview from `dist/` or
+            // `src-tauri/target/debug/` inside a checkout.
+            for up in ["..", "../..", "../../.."] {
+                dirs.push(dir.join(up).join("resources"));
+                dirs.push(dir.join(up).join("Server/clinic-server/target"));
+            }
+        }
+    }
+
+    // Compile-time crate dir keeps dev lookups correct for any checkout path.
+    if let Ok(manifest) = std::env::var("CARGO_MANIFEST_DIR") {
+        let manifest = PathBuf::from(manifest);
+        if let Some(root) = manifest.parent() {
+            dirs.push(root.join("Server/clinic-server/target"));
+            dirs.push(root.join("clinic-server/target"));
+        }
+    }
+
+    dirs.dedup();
+    dirs
+}
+
+/// Resolves the sidecar server JAR, or `None` with the searched locations.
+fn find_server_jar() -> Result<PathBuf, String> {
+    // Explicit override always wins (CI, packaging, unusual layouts).
+    if let Ok(explicit) = std::env::var("CLINIC_SERVER_JAR") {
+        let path = PathBuf::from(explicit);
+        if path.is_file() {
+            return Ok(path);
+        }
+        return Err(format!(
+            "CLINIC_SERVER_JAR is set but does not point at a file: {}",
+            path.display()
+        ));
+    }
+
+    let dirs = server_jar_search_dirs();
+    for dir in &dirs {
+        if let Some(found) = newest_jar_in(dir) {
+            return Ok(found);
+        }
+    }
+
+    let searched = dirs
+        .iter()
+        .map(|d| d.display().to_string())
+        .collect::<Vec<_>>()
+        .join("\n  ");
+    Err(format!(
+        "Server jar not found. Expected {name} or {prefix}*{suffix} in any of:\n  {searched}\n\
+         Build it with `mvn -o package -DskipTests` in the clinic-server repo, then \
+         `npm run sync-server` to stage it, or set CLINIC_SERVER_JAR to its path.",
+        name = SERVER_JAR_STABLE,
+        prefix = SERVER_JAR_PREFIX,
+        suffix = SERVER_JAR_SUFFIX,
+        searched = searched,
+    ))
 }
 
 fn get_log_path() -> PathBuf {
@@ -299,17 +452,9 @@ pub async fn start_server(port: Option<u16>) -> Result<HashMap<String, String>, 
         return Err(format!("Port {} already in use", target_port));
     }
 
-    let jar_path = get_app_dir();
-    let jar_str = if jar_path.is_file() {
-        jar_path.to_string_lossy().to_string()
-    } else {
-        // Try to find jar
-        r"D:\proj\Server\clinic-server\target\clinic-server-1.7.0.jar".to_string()
-    };
-
-    if !std::path::Path::new(&jar_str).exists() {
-        return Err(format!("Server jar not found at {}", jar_str));
-    }
+    let jar_path = find_server_jar()?;
+    let jar_str = jar_path.to_string_lossy().to_string();
+    println!("[server] sidecar jar: {}", jar_str);
 
     // Get ADMIN_PASSWORD from env or generate
     let admin_pw = configured_admin_password().unwrap_or_else(generated_admin_password);
@@ -471,5 +616,73 @@ pub async fn fix_firewall() -> Result<String, String> {
         Ok("Firewall rule added (elevated)".to_string())
     } else {
         Err("Failed to add firewall rule, please run as administrator".to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rank(name: &str) -> Option<(u8, Vec<u64>)> {
+        jar_rank(std::path::Path::new(name))
+    }
+
+    #[test]
+    fn ranks_the_staged_name_above_any_versioned_build() {
+        let stable = rank("clinic-server.jar").expect("staged name must be recognised");
+        let versioned = rank("clinic-server-1.7.0.jar").expect("versioned name must be recognised");
+        assert!(stable > versioned, "staged {stable:?} must outrank versioned {versioned:?}");
+    }
+
+    #[test]
+    fn ranks_higher_versions_above_lower_ones() {
+        assert!(rank("clinic-server-1.8.0.jar") > rank("clinic-server-1.7.0.jar"));
+        assert!(rank("clinic-server-1.10.0.jar") > rank("clinic-server-1.9.0.jar"));
+        assert!(rank("clinic-server-2.0.0.jar") > rank("clinic-server-1.99.99.jar"));
+    }
+
+    #[test]
+    fn tolerates_snapshot_and_rc_qualifiers() {
+        assert_eq!(rank("clinic-server-1.7.0-SNAPSHOT.jar"), Some((0, vec![1, 7, 0])));
+        assert_eq!(rank("clinic-server-1.7.0-rc1.jar"), Some((0, vec![1, 7, 0])));
+    }
+
+    #[test]
+    fn rejects_files_that_are_not_server_jars() {
+        assert!(rank("clinic-server.jar.bak").is_none());
+        assert!(rank("clinic-server").is_none());
+        assert!(rank("some-other-1.0.0.jar").is_none());
+        assert!(rank("clinic-server-.jar").is_none(), "empty version must be rejected");
+        assert!(rank("clinic-server-abc.jar").is_none(), "non-numeric version must be rejected");
+    }
+
+    #[test]
+    fn newest_jar_in_picks_the_staged_name_then_the_highest_version() {
+        let dir = std::env::temp_dir().join(format!("zeyara-jar-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        for name in ["clinic-server-1.7.0.jar", "clinic-server-1.8.0.jar", "notes.txt"] {
+            std::fs::write(dir.join(name), b"x").unwrap();
+        }
+
+        let picked = newest_jar_in(&dir).expect("a jar must be found");
+        assert_eq!(picked.file_name().unwrap(), "clinic-server-1.8.0.jar");
+
+        // Staging the stable name must shadow every versioned build in the folder.
+        std::fs::write(dir.join("clinic-server.jar"), b"x").unwrap();
+        let picked = newest_jar_in(&dir).expect("a jar must be found");
+        assert_eq!(picked.file_name().unwrap(), "clinic-server.jar");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn newest_jar_in_returns_none_for_a_missing_or_empty_dir() {
+        assert!(newest_jar_in(std::path::Path::new("definitely-not-here-xyz")).is_none());
+        let empty = std::env::temp_dir().join(format!("zeyara-jar-empty-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&empty);
+        std::fs::create_dir_all(&empty).unwrap();
+        assert!(newest_jar_in(&empty).is_none());
+        let _ = std::fs::remove_dir_all(&empty);
     }
 }

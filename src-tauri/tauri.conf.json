@@ -39,10 +39,10 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": [
-      "resources/jre",
-      "../../Server/clinic-server/target/clinic-server-1.7.0.jar"
-    ],
+  "resources": [
+    "resources/jre",
+    "resources/clinic-server.jar"
+  ],
     "createUpdaterArtifacts": false
   }
 }
