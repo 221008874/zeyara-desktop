@@ -10,7 +10,8 @@
 //
 // Override the source with CLINIC_SERVER_REPO=/path/to/clinic-server
 // or CLINIC_SERVER_JAR=/path/to/some.jar
-import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { copyFileSync, createReadStream, existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { basename, join, resolve } from 'node:path';
 
 const STAGED_NAME = 'clinic-server.jar';
@@ -64,6 +65,23 @@ function resolveSource() {
   return null;
 }
 
+/**
+ * SHA-256 of a file, streamed (the JAR is ~135 MB).
+ *
+ * Staleness is detected by CONTENT, not size. Maven repackages are frequently the
+ * same byte length as the previous build, so comparing sizes would silently keep an
+ * old JAR — and because the staged copy is gitignored, nothing else would reveal it.
+ */
+function sha256(path) {
+  return new Promise((resolvePromise, reject) => {
+    const h = createHash('sha256');
+    const s = createReadStream(path);
+    s.on('data', (c) => h.update(c));
+    s.on('error', reject);
+    s.on('end', () => resolvePromise(h.digest('hex')));
+  });
+}
+
 const source = resolveSource();
 if (!source) {
   console.error(
@@ -75,17 +93,42 @@ if (!source) {
 }
 
 mkdirSync(DEST_DIR, { recursive: true });
+
+const srcHash = await sha256(source);
+const srcBytes = statSync(source).size;
+const srcMtime = statSync(source).mtime.toISOString().replace('T', ' ').slice(0, 16);
+
 if (existsSync(DEST)) {
-  const current = statSync(DEST).size;
-  const incoming = statSync(source).size;
-  if (current === incoming) {
-    console.log(`[sync-server-jar] already staged (${basename(source)}, ${(incoming / 1048576).toFixed(1)} MB)`);
+  const destHash = await sha256(DEST);
+  if (destHash === srcHash) {
+    console.log(
+      `[sync-server-jar] already staged, content matches\n` +
+        `  source ${basename(source)}  ${(srcBytes / 1048576).toFixed(1)} MB  built ${srcMtime}\n` +
+        `  sha256 ${srcHash.slice(0, 16)}`,
+    );
     process.exit(0);
   }
+  console.log(
+    `[sync-server-jar] content differs (staged ${await shortHash(DEST)} != source ${srcHash.slice(0, 16)}), restaging`,
+  );
   rmSync(DEST, { force: true });
 }
+
 copyFileSync(source, DEST);
+
+// Verify the copy actually landed; a partial copy would ship a broken sidecar.
+const destHash = await sha256(DEST);
+if (destHash !== srcHash) {
+  console.error(`[sync-server-jar] FAILED: staged copy does not match source (${destHash.slice(0, 16)} != ${srcHash.slice(0, 16)})`);
+  process.exit(1);
+}
+
 console.log(
-  `[sync-server-jar] staged ${basename(source)} -> src-tauri/resources/${STAGED_NAME} ` +
-    `(${(statSync(DEST).size / 1048576).toFixed(1)} MB)`,
+  `[sync-server-jar] staged ${basename(source)} -> src-tauri/resources/${STAGED_NAME}\n` +
+    `  ${(srcBytes / 1048576).toFixed(1)} MB  built ${srcMtime}\n` +
+    `  sha256 ${srcHash.slice(0, 16)}`,
 );
+
+async function shortHash(path) {
+  return (await sha256(path)).slice(0, 16);
+}
