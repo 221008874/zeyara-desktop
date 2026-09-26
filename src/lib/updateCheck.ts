@@ -1,6 +1,6 @@
 import { getBaseUrl } from './api';
+import { getAppVersion } from './version';
 
-const CURRENT_VERSION = '1.0.0';
 const APP_ID = 'desktop';
 
 export interface UpdateInfo {
@@ -26,8 +26,12 @@ export async function checkForUpdate(): Promise<UpdateInfo | null> {
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5000);
+    // The version the server compares against must be the one this build actually is,
+    // otherwise the server compares against a stale literal and can never offer a newer
+    // release to a correctly-built installer.
+    const currentVersion = await getAppVersion();
     const res = await fetch(
-      `${base}/api/update/check?app=${APP_ID}&currentVersion=${CURRENT_VERSION}`,
+      `${base}/api/update/check?app=${APP_ID}&currentVersion=${encodeURIComponent(currentVersion)}`,
       {
         headers: { 'Content-Type': 'application/json' },
         cache: 'no-store',
@@ -46,7 +50,7 @@ export async function checkForUpdate(): Promise<UpdateInfo | null> {
       releaseNotes: json.releaseNotes ?? null,
       releaseDate: json.releaseDate ?? null,
       forceUpdate: json.forceUpdate === true,
-      currentVersion: CURRENT_VERSION,
+      currentVersion,
       checksum: json.checksum ?? null,
     };
   } catch {

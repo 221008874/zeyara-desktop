@@ -1,6 +1,7 @@
 import React from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
-import { useAuthStore } from '../stores/auth';
+import { useAuthStore, type Role } from '../stores/auth';
+import { rolesFor } from '../app-shell/navigation';
 import { useLicenseStore } from '../stores/license';
 import { LoginPage } from '../pages/LoginPage';
 import { LicenseScreen } from '../pages/LicenseScreen';
@@ -40,12 +41,22 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
-function RoleGuard({ roles, children }: { roles: string[]; children: React.ReactNode }) {
+function RoleGuard({ roles, children }: { roles: Role[]; children: React.ReactNode }) {
   const { session } = useAuthStore();
-  if (session?.role && !roles.includes(session.role)) {
+  // Fail closed. The previous `session?.role && ...` fell through and rendered the
+  // children when the role was missing, so a session without a role saw every screen.
+  if (!session?.role || !roles.includes(session.role)) {
     return <Navigate to="/dashboard" replace />;
   }
   return <>{children}</>;
+}
+
+/**
+ * Applies the role list that `app-shell/navigation.ts` declares for a path, so the
+ * router and the sidebar read one source instead of two that can drift.
+ */
+function Guarded({ path, children }: { path: string; children: React.ReactNode }) {
+  return <RoleGuard roles={rolesFor(path)}>{children}</RoleGuard>;
 }
 
 function LicenseGate({ children }: { children: React.ReactNode }) {
@@ -118,30 +129,35 @@ export function AppRoutes() {
                 <AppShell>
                   <Routes>
                     <Route index element={<Navigate to="/dashboard" replace />} />
-                    <Route path="dashboard" element={<DashboardPage />} />
-                    <Route path="patients" element={<PatientsPage />} />
-                    <Route path="patients/new" element={<AddPatientPage />} />
-                    <Route path="patients/:id/edit" element={<AddPatientPage />} />
-                    <Route path="patients/:id" element={<PatientDashboardPage />} />
-                    <Route path="appointments" element={<AppointmentsPage />} />
-                    <Route path="appointments/new" element={<AddAppointmentPage />} />
-                    <Route path="expenses" element={<ExpensesPage />} />
-                    <Route path="online-bookings" element={<RoleGuard roles={['ADMIN', 'SECRETARY']}><OnlineBookingsPage /></RoleGuard>} />
-                    <Route path="profile" element={<ProfilePage />} />
-                    <Route path="notifications" element={<NotificationsPage />} />
-                    <Route path="settings" element={<SettingsPage />} />
-                    <Route path="schedule" element={<RoleGuard roles={['ADMIN', 'DOCTOR']}><SchedulePage /></RoleGuard>} />
-                    <Route path="financial" element={<RoleGuard roles={['ADMIN', 'DOCTOR']}><FinancialPage /></RoleGuard>} />
-                    <Route path="money-safe" element={<RoleGuard roles={['ADMIN', 'DOCTOR']}><MoneySafePage /></RoleGuard>} />
-        <Route path="outstanding" element={<RoleGuard roles={['ADMIN', 'DOCTOR', 'SECRETARY']}><OutstandingBalancesPage /></RoleGuard>} />
-                    <Route path="reports" element={<RoleGuard roles={['ADMIN', 'DOCTOR']}><ReportsPage /></RoleGuard>} />
-                    <Route path="medications" element={<RoleGuard roles={['ADMIN', 'DOCTOR']}><MedicationsPage /></RoleGuard>} />
-                    <Route path="history" element={<RoleGuard roles={['ADMIN', 'DOCTOR']}><HistoryPage /></RoleGuard>} />
-                    <Route path="users" element={<RoleGuard roles={['ADMIN']}><UsersPage /></RoleGuard>} />
-                    <Route path="clinic-profile" element={<RoleGuard roles={['ADMIN']}><ClinicProfilePage /></RoleGuard>} />
-                    <Route path="backups" element={<RoleGuard roles={['ADMIN']}><BackupsPage /></RoleGuard>} />
-                    <Route path="infra" element={<RoleGuard roles={['ADMIN']}><InfraPage /></RoleGuard>} />
-                    <Route path="server-manager" element={<RoleGuard roles={['ADMIN']}><ServerManagerPage /></RoleGuard>} />
+                    {/* Every route below is wrapped in <Guarded path=...>, which reads the
+                        role list from app-shell/navigation.ts. None relies on a hand-written
+                        inline array, and none is left unguarded by omission. */}
+                    <Route path="dashboard" element={<Guarded path="/dashboard"><DashboardPage /></Guarded>} />
+                    <Route path="patients" element={<Guarded path="/patients"><PatientsPage /></Guarded>} />
+                    <Route path="patients/new" element={<Guarded path="/patients/new"><AddPatientPage /></Guarded>} />
+                    <Route path="patients/:id/edit" element={<Guarded path="/patients/:id/edit"><AddPatientPage /></Guarded>} />
+                    <Route path="patients/:id" element={<Guarded path="/patients/:id"><PatientDashboardPage /></Guarded>} />
+                    <Route path="appointments" element={<Guarded path="/appointments"><AppointmentsPage /></Guarded>} />
+                    <Route path="appointments/new" element={<Guarded path="/appointments/new"><AddAppointmentPage /></Guarded>} />
+                    <Route path="expenses" element={<Guarded path="/expenses"><ExpensesPage /></Guarded>} />
+                    <Route path="online-bookings" element={<Guarded path="/online-bookings"><OnlineBookingsPage /></Guarded>} />
+                    <Route path="profile" element={<Guarded path="/profile"><ProfilePage /></Guarded>} />
+                    <Route path="notifications" element={<Guarded path="/notifications"><NotificationsPage /></Guarded>} />
+                    <Route path="settings" element={<Guarded path="/settings"><SettingsPage /></Guarded>} />
+                    <Route path="schedule" element={<Guarded path="/schedule"><SchedulePage /></Guarded>} />
+                    <Route path="financial" element={<Guarded path="/financial"><FinancialPage /></Guarded>} />
+                    <Route path="money-safe" element={<Guarded path="/money-safe"><MoneySafePage /></Guarded>} />
+                    <Route path="outstanding" element={<Guarded path="/outstanding"><OutstandingBalancesPage /></Guarded>} />
+                    <Route path="reports" element={<Guarded path="/reports"><ReportsPage /></Guarded>} />
+                    <Route path="medications" element={<Guarded path="/medications"><MedicationsPage /></Guarded>} />
+                    <Route path="history" element={<Guarded path="/history"><HistoryPage /></Guarded>} />
+                    <Route path="users" element={<Guarded path="/users"><UsersPage /></Guarded>} />
+                    <Route path="clinic-profile" element={<Guarded path="/clinic-profile"><ClinicProfilePage /></Guarded>} />
+                    <Route path="backups" element={<Guarded path="/backups"><BackupsPage /></Guarded>} />
+                    <Route path="infra" element={<Guarded path="/infra"><InfraPage /></Guarded>} />
+                    {/* /server-manager has a top-level route above that deliberately
+                        bypasses LicenseGate, so a locked ADMIN can still unlock. The nested
+                        copy is unreachable and only shadowed it in the route tree. */}
                     <Route path="*" element={<Navigate to="/dashboard" replace />} />
                   </Routes>
                 </AppShell>

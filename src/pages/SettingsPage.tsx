@@ -3,6 +3,7 @@ import { Typography, Box, Paper, TextField, Button, FormControl, InputLabel, Sel
 import { useSettingsStore } from '../stores/settings';
 import { useAuthStore } from '../stores/auth';
 import { getBaseUrl, probeServer, resetServerBaseUrl, setServerBaseUrl } from '../lib/api';
+import { getAppVersion } from '../lib/version';
 
 export const SettingsPage: React.FC = () => {
   const { theme, setTheme, serverHost, serverPort, setServerConfig } = useSettingsStore();
@@ -11,6 +12,11 @@ export const SettingsPage: React.FC = () => {
   const [port, setPort] = React.useState(serverPort);
   const [testResult, setTestResult] = React.useState<{ ok: boolean; text: string } | null>(null);
   const [testing, setTesting] = React.useState(false);
+  const [version, setVersion] = React.useState('');
+
+  React.useEffect(() => {
+    void getAppVersion().then(setVersion).catch(() => setVersion(''));
+  }, []);
 
   const refreshNotificationBus = () => {
     import('../lib/notificationBus')
@@ -96,6 +102,13 @@ export const SettingsPage: React.FC = () => {
         <Button variant="outlined" color="error" onClick={logout}>
           تسجيل الخروج
         </Button>
+      </Paper>
+
+      <Paper sx={{ p: 3 }}>
+        <Typography variant="subtitle1" sx={{ mb: 2 }}>حول التطبيق</Typography>
+        <Typography variant="body2" sx={{ color: '#6B7280' }}>
+          Zeyara Desktop — الإصدار {version}
+        </Typography>
       </Paper>
     </Box>
   );

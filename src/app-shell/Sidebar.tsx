@@ -1,65 +1,14 @@
 import React from 'react';
 import { Drawer, List, ListItemButton, ListItemIcon, ListItemText, Box, Typography, IconButton, Tooltip, useMediaQuery, useTheme } from '@mui/material';
-import DashboardIcon from '@mui/icons-material/Dashboard';
-import PersonIcon from '@mui/icons-material/Person';
-import CalendarMonthIcon from '@mui/icons-material/CalendarMonth';
-import AddIcon from '@mui/icons-material/Add';
-import CalendarTodayIcon from '@mui/icons-material/CalendarToday';
-import AccountBalanceWalletIcon from '@mui/icons-material/AccountBalanceWallet';
-import LockIcon from '@mui/icons-material/Lock';
-import PaymentsIcon from '@mui/icons-material/Payments';
-import PaidIcon from '@mui/icons-material/Paid';
-import WbSunnyIcon from '@mui/icons-material/WbSunny';
-import AssessmentIcon from '@mui/icons-material/Assessment';
-import MedicationIcon from '@mui/icons-material/Medication';
-import HistoryIcon from '@mui/icons-material/History';
-import NotificationsIcon from '@mui/icons-material/Notifications';
-import GroupsIcon from '@mui/icons-material/Groups';
-import LocalHospitalIcon from '@mui/icons-material/LocalHospital';
-import BackupIcon from '@mui/icons-material/Backup';
-import BuildIcon from '@mui/icons-material/Build';
-import SettingsIcon from '@mui/icons-material/Settings';
-import BadgeIcon from '@mui/icons-material/Badge';
-import DnsIcon from '@mui/icons-material/Dns';
 import MenuOpenIcon from '@mui/icons-material/MenuOpen';
 import MenuIcon from '@mui/icons-material/Menu';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useSettingsStore } from '../stores/settings';
 import { useAuthStore } from '../stores/auth';
+import { NAV_ITEMS, canAccess } from './navigation';
 
 const DRAWER_WIDTH = 260;
 const DRAWER_WIDTH_COLLAPSED = 68;
-
-interface NavItem {
-  label: string;
-  path: string;
-  icon: React.ElementType;
-  roles: string[];
-}
-
-const allNavItems: NavItem[] = [
-  { label: 'لوحة التحكم', path: '/', icon: DashboardIcon, roles: ['ADMIN', 'DOCTOR', 'SECRETARY'] },
-  { label: 'المرضى', path: '/patients', icon: PersonIcon, roles: ['ADMIN', 'DOCTOR', 'SECRETARY'] },
-  { label: 'المواعيد', path: '/appointments', icon: CalendarMonthIcon, roles: ['ADMIN', 'DOCTOR', 'SECRETARY'] },
-  { label: 'موعد جديد', path: '/appointments/new', icon: AddIcon, roles: ['ADMIN', 'DOCTOR', 'SECRETARY'] },
-  { label: 'الجدول الزمني', path: '/schedule', icon: CalendarTodayIcon, roles: ['ADMIN', 'DOCTOR'] },
-  { label: 'المالية', path: '/financial', icon: AccountBalanceWalletIcon, roles: ['ADMIN', 'DOCTOR'] },
-  { label: 'خزينة المال', path: '/money-safe', icon: LockIcon, roles: ['ADMIN', 'DOCTOR'] },
-    { label: 'المبالغ المستحقة', path: '/outstanding', icon: PaidIcon, roles: ['ADMIN', 'DOCTOR', 'SECRETARY'] },
-  { label: 'المصروفات', path: '/expenses', icon: PaymentsIcon, roles: ['ADMIN', 'DOCTOR', 'SECRETARY'] },
-  { label: 'الحجوزات الإلكترونية', path: '/online-bookings', icon: WbSunnyIcon, roles: ['ADMIN', 'SECRETARY'] },
-  { label: 'التقارير', path: '/reports', icon: AssessmentIcon, roles: ['ADMIN', 'DOCTOR'] },
-  { label: 'الأدوية', path: '/medications', icon: MedicationIcon, roles: ['ADMIN', 'DOCTOR'] },
-  { label: 'التاريخ الطبي', path: '/history', icon: HistoryIcon, roles: ['ADMIN', 'DOCTOR'] },
-  { label: 'الإشعارات', path: '/notifications', icon: NotificationsIcon, roles: ['ADMIN', 'DOCTOR', 'SECRETARY'] },
-  { label: 'المستخدمون', path: '/users', icon: GroupsIcon, roles: ['ADMIN'] },
-  { label: 'بيانات العيادة', path: '/clinic-profile', icon: LocalHospitalIcon, roles: ['ADMIN'] },
-  { label: 'النسخ الاحتياطية', path: '/backups', icon: BackupIcon, roles: ['ADMIN'] },
-  { label: 'صحة النظام', path: '/infra', icon: BuildIcon, roles: ['ADMIN'] },
-  { label: 'إدارة الخادم', path: '/server-manager', icon: DnsIcon, roles: ['ADMIN'] },
-  { label: 'الإعدادات', path: '/settings', icon: SettingsIcon, roles: ['ADMIN', 'DOCTOR', 'SECRETARY'] },
-  { label: 'تحديث البيانات', path: '/profile', icon: BadgeIcon, roles: ['ADMIN', 'DOCTOR', 'SECRETARY'] },
-];
 
 export const Sidebar: React.FC = () => {
   const navigate = useNavigate();
@@ -75,9 +24,9 @@ export const Sidebar: React.FC = () => {
     setCollapsed(narrow);
   }, [narrow]);
 
-  const filteredItems = allNavItems.filter((item) =>
-    session?.role ? item.roles.includes(session.role) : true
-  );
+  // Role lists live in ./navigation so the sidebar and the router cannot disagree.
+  // A missing role filters everything out rather than showing everything.
+  const filteredItems = NAV_ITEMS.filter((item) => canAccess(item.path, session?.role));
 
   const width = collapsed ? DRAWER_WIDTH_COLLAPSED : DRAWER_WIDTH;
 
