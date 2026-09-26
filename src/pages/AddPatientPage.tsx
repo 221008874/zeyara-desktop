@@ -24,6 +24,13 @@ export const AddPatientPage: React.FC = () => {
     diagnosis: '',
     heightCm: '',
     weightKg: '',
+    // Clinical vitals. The server has always bound these (Patient.java) and the
+    // PDF generators in lib/patientDocs.ts already render them, but there was no
+    // control to record them — only the JavaFX doctor app could enter them.
+    bodyTemperature: '',
+    heartRate: '',
+    bloodPressureSystolic: '',
+    bloodPressureDiastolic: '',
     isPregnant: false,
     pregnancyWeeks: '',
     allergies: '',
@@ -49,6 +56,10 @@ export const AddPatientPage: React.FC = () => {
           diagnosis: p.diagnosis ?? '',
           heightCm: p.heightCm != null ? String(p.heightCm) : '',
           weightKg: p.weightKg != null ? String(p.weightKg) : '',
+          bodyTemperature: p.bodyTemperature != null ? String(p.bodyTemperature) : '',
+          heartRate: p.heartRate != null ? String(p.heartRate) : '',
+          bloodPressureSystolic: p.bloodPressureSystolic != null ? String(p.bloodPressureSystolic) : '',
+          bloodPressureDiastolic: p.bloodPressureDiastolic != null ? String(p.bloodPressureDiastolic) : '',
           isPregnant: !!p.isPregnant,
           pregnancyWeeks: p.pregnancyWeeks != null ? String(p.pregnancyWeeks) : '',
           allergies: p.allergies ?? '',
@@ -77,6 +88,21 @@ export const AddPatientPage: React.FC = () => {
 
   const validate = (): Record<string, string> => {
     const fe: Record<string, string> = {};
+    // Optional numeric field: blank passes, non-numeric fails, and a value outside
+    // [min,max] fails. Keeps the four vitals checks to one line each.
+    const range = (field: string, label: string, min: number, max: number, unit: string) => {
+      const raw = (form as Record<string, unknown>)[field];
+      const text = typeof raw === 'string' ? raw.trim() : '';
+      if (!text) return;
+      if (!Number.isFinite(Number(text))) {
+        fe[field] = `${label} يجب أن يكون رقماً`;
+        return;
+      }
+      const n = Number(text);
+      if (n < min || n > max) {
+        fe[field] = `${label} يجب أن يكون بين ${min} و ${max} ${unit}`;
+      }
+    };
     const name = form.name.trim();
     if (!name) fe.name = 'الرجاء إدخال اسم المريض';
     else if (name.length > 200) fe.name = 'الاسم لا يمكن أن يتجاوز 200 حرف';
@@ -98,6 +124,10 @@ export const AddPatientPage: React.FC = () => {
       const w = Number(form.weightKg);
       if (w < 1 || w > 500) fe.weightKg = 'الوزن يجب أن يكون بين 1 و 500 كغ';
     }
+    range('bodyTemperature', 'درجة الحرارة', 30, 45, '°C');
+    range('heartRate', 'معدل ضربات القلب', 20, 250, 'نبضة/دقيقة');
+    range('bloodPressureSystolic', 'الضغط الانقباضي', 50, 260, 'mmHg');
+    range('bloodPressureDiastolic', 'الضغط الانبساطي', 30, 160, 'mmHg');
     if (form.pregnancyWeeks && form.gender.trim().toLowerCase() !== 'female') {
       fe.pregnancyWeeks = 'فترة الحمل تُحدد فقط للمرضى الإناث';
     }
@@ -122,11 +152,22 @@ export const AddPatientPage: React.FC = () => {
     }
     setSaving(true);
     try {
+      // Blank numeric inputs must be sent as null, not undefined: `undefined` is
+      // dropped during JSON serialisation, which on a PUT means "leave the stored
+      // value alone" and makes it impossible to clear a previously recorded vital.
+      const optionalNumber = (value: string) => {
+        const text = value.trim();
+        return text === '' ? null : Number(text);
+      };
       const payload = {
         ...form,
         age: form.age ? Number(form.age) : undefined,
-        heightCm: form.heightCm ? Number(form.heightCm) : undefined,
-        weightKg: form.weightKg ? Number(form.weightKg) : undefined,
+        heightCm: optionalNumber(form.heightCm),
+        weightKg: optionalNumber(form.weightKg),
+        bodyTemperature: optionalNumber(form.bodyTemperature),
+        heartRate: optionalNumber(form.heartRate),
+        bloodPressureSystolic: optionalNumber(form.bloodPressureSystolic),
+        bloodPressureDiastolic: optionalNumber(form.bloodPressureDiastolic),
         pregnancyWeeks: form.pregnancyWeeks ? Number(form.pregnancyWeeks) : undefined,
         isPregnant: form.isPregnant,
       };
@@ -193,6 +234,51 @@ export const AddPatientPage: React.FC = () => {
           <TextField label="التشخيص" value={form.diagnosis} onChange={(e) => handleChange('diagnosis', e.target.value)} fullWidth multiline rows={2} />
           <TextField label="الطول (سم)" type="number" value={form.heightCm} onChange={(e) => handleChange('heightCm', e.target.value)} error={!!fe.heightCm} helperText={fe.heightCm} fullWidth />
           <TextField label="الوزن (كغ)" type="number" value={form.weightKg} onChange={(e) => handleChange('weightKg', e.target.value)} error={!!fe.weightKg} helperText={fe.weightKg} fullWidth />
+          <Typography variant="subtitle2" sx={{ mt: 1, fontWeight: 700, color: 'text.secondary' }}>
+            العلامات الحيوية
+          </Typography>
+          <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' }, gap: 2 }}>
+            <TextField
+              label="درجة الحرارة (°C)"
+              type="number"
+              value={form.bodyTemperature}
+              onChange={(e) => handleChange('bodyTemperature', e.target.value)}
+              error={!!fe.bodyTemperature}
+              helperText={fe.bodyTemperature ?? '30 – 45'}
+              inputProps={{ step: '0.1', inputMode: 'decimal' }}
+              fullWidth
+            />
+            <TextField
+              label="معدل ضربات القلب (نبضة/دقيقة)"
+              type="number"
+              value={form.heartRate}
+              onChange={(e) => handleChange('heartRate', e.target.value)}
+              error={!!fe.heartRate}
+              helperText={fe.heartRate ?? '20 – 250'}
+              inputProps={{ step: '1', inputMode: 'numeric' }}
+              fullWidth
+            />
+            <TextField
+              label="الضغط الانقباضي (mmHg)"
+              type="number"
+              value={form.bloodPressureSystolic}
+              onChange={(e) => handleChange('bloodPressureSystolic', e.target.value)}
+              error={!!fe.bloodPressureSystolic}
+              helperText={fe.bloodPressureSystolic ?? '50 – 260'}
+              inputProps={{ step: '1', inputMode: 'numeric' }}
+              fullWidth
+            />
+            <TextField
+              label="الضغط الانبساطي (mmHg)"
+              type="number"
+              value={form.bloodPressureDiastolic}
+              onChange={(e) => handleChange('bloodPressureDiastolic', e.target.value)}
+              error={!!fe.bloodPressureDiastolic}
+              helperText={fe.bloodPressureDiastolic ?? '30 – 160'}
+              inputProps={{ step: '1', inputMode: 'numeric' }}
+              fullWidth
+            />
+          </Box>
           <FormControl fullWidth error={!!fe.pregnancyWeeks}>
             <InputLabel>فترة الحمل</InputLabel>
             <Select value={form.pregnancyWeeks} onChange={(e) => handleChange('pregnancyWeeks', e.target.value)} label="فترة الحمل">
