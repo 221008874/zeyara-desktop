@@ -20,6 +20,7 @@ import {
 import { useNavigate } from 'react-router-dom';
 import { offlineGet } from '../lib/offlineDb';
 import { fmtDateTime, fmtMoney, timeZoneLabel } from '../lib/format';
+import { DashboardCharts } from './DashboardCharts';
 import { useAuthStore } from '../stores/auth';
 import { checkForUpdate, downloadVerifiedUpdate, UpdateInfo } from '../lib/updateCheck';
 import { useSseRefresh } from '../lib/useSseRefresh';
@@ -180,7 +181,10 @@ export const DashboardPage: React.FC = () => {
         ))}
       </Grid>
 
-      <Typography variant="h6" sx={{ mb: 2 }}>إجراءات سريعة</Typography>
+      <Typography variant="h6" sx={{ mb: 2, mt: 4 }}>الرسوم البيانية</Typography>
+      <DashboardCharts />
+
+      <Typography variant="h6" sx={{ mb: 2, mt: 4 }}>إجراءات سريعة</Typography>
       <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', mb: 4 }}>
         {quickActions.map((a) => (
           <Button key={a.label} variant="outlined" onClick={() => navigate(a.path)} startIcon={<a.icon />}>
