@@ -1,5 +1,6 @@
 import { jsPDF } from 'jspdf';
 import { CAIRO_FONT_B64 } from './cairoFontBase64';
+import { saveDocument, type SaveOutcome } from './native';
 
 const MARGIN_MM = 8;
 const PAGE_W = 210;
@@ -210,7 +211,7 @@ function measureBlock(doc: jsPDF, b: PdfBlock): number {
 
 // ---- drawing (mm coordinates, y measured from top) ----
 
-export const exportArabicDocumentPdf = ({ filename, blocks }: ArabicDocOptions): void => {
+export const exportArabicDocumentPdf = async ({ filename, blocks }: ArabicDocOptions): Promise<SaveOutcome> => {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
   ensureFont(doc);
   doc.setFont('Cairo');
@@ -359,5 +360,9 @@ export const exportArabicDocumentPdf = ({ filename, blocks }: ArabicDocOptions):
     drawBlock(b);
   }
 
-  doc.save(filename);
+  // Hand the bytes to the native layer rather than calling doc.save(), which inside a
+  // Tauri webview drops the file silently into the OS download folder with no dialog.
+  // In the shell this opens a real save dialog; in a browser it falls back to a normal
+  // download, so the same call sites keep working in dev.
+  return saveDocument(doc.output('blob'), filename);
 };

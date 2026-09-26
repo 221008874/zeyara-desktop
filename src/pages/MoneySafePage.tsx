@@ -23,18 +23,9 @@ import { fmtDateTime, fmtMoney, moneySafeTypeLabel, sourceTypeLabel, todayISO } 
 import { TableSkeleton } from '../design-system/TableSkeleton';
 import { EmptyState } from '../design-system/EmptyState';
 import DownloadIcon from '@mui/icons-material/Download';
+import { saveDocument } from '../lib/native';
 import RefreshIcon from '@mui/icons-material/Refresh';
 
-const downloadBlob = (blob: Blob, filename: string) => {
-  const url = window.URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.setAttribute('download', filename);
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  window.URL.revokeObjectURL(url);
-};
 
 type SourceFilter = 'ALL' | 'PAYMENT' | 'EXPENSE' | 'MANUAL';
 
@@ -112,7 +103,7 @@ export const MoneySafePage: React.FC = () => {
       String(t.running ?? ''),
     ]);
     const csvContent = [headers.join(','), ...rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(','))].join('\n');
-    downloadBlob(new Blob([`\uFEFF${csvContent}`], { type: 'text/csv;charset=utf-8;' }), `money-safe-${todayISO()}.csv`);
+    void saveDocument(new Blob([`\uFEFF${csvContent}`], { type: 'text/csv;charset=utf-8;' }), `money-safe-${todayISO()}.csv`);
   };
 
   return (

@@ -1,6 +1,19 @@
 {
+  "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Default capability set",
+  "description": "Least-privilege capability set. Each permission is granted individually and only where the app actually calls it; `dialog:default` and `opener:default` are deliberately NOT used because they also enable dialogs and URL schemes this app never opens.",
   "windows": ["main"],
-  "permissions": ["core:default", "shell:default"]
+  "permissions": [
+    "core:default",
+
+    "dialog:allow-save",
+    "dialog:allow-open",
+
+    "opener:allow-open-path",
+    "opener:allow-reveal-item-in-dir",
+
+    "notification:allow-is-permission-granted",
+    "notification:allow-request-permission",
+    "notification:allow-notify"
+  ]
 }

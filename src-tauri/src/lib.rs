@@ -1,3 +1,4 @@
+mod documents;
 mod heartbeat;
 mod server;
 
@@ -75,7 +76,16 @@ async fn get_heartbeat_state(app: tauri::AppHandle) -> Result<heartbeat::Heartbe
 #[cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 pub fn run() {
     tauri::Builder::default()
-        .plugin(tauri_plugin_shell::init())
+        // Native capabilities used by the client (Phase 6):
+        //   dialog      - native open/save so generated PDF/CSV/XLSX files land where the
+        //                 user chooses instead of a silent browser download
+        //   opener      - open a generated document or reveal it in Explorer
+        //   notification- OS-level alerts for appointments and new messages
+        // Permissions are granted individually in capabilities/default.json; the
+        // shell plugin is intentionally NOT registered, because nothing used it.
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_notification::init())
         .manage(DiscoveredServer(std::sync::Mutex::new(None)))
         .manage(heartbeat::HeartbeatController::new())
         .on_window_event(|window, event| {
@@ -97,6 +107,7 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            documents::save_document,
             get_device_fingerprint,
             get_network_interfaces,
             start_heartbeat_monitor,

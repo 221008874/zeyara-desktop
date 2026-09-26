@@ -23,6 +23,7 @@ import { Notice } from '../design-system/Notice';
 import PaidIcon from '@mui/icons-material/Paid';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import FileDownloadIcon from '@mui/icons-material/FileDownload';
+import { saveDocument } from '../lib/native';
 
 type OutstandingRow = {
   patientId: number;
@@ -57,15 +58,8 @@ const exportCsv = (rows: EnrichedRow[]) => {
     ),
   ];
   // UTF-8 BOM so Excel opens the Arabic headers correctly.
-  const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
-  const url = window.URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.setAttribute('download', `outstanding-balances-${new Date().toISOString().slice(0, 10)}.csv`);
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  window.URL.revokeObjectURL(url);
+  const blob = new Blob(['\uFEFF' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+  void saveDocument(blob, `outstanding-balances-${new Date().toISOString().slice(0, 10)}.csv`);
 };
 
 /**

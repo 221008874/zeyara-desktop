@@ -27,6 +27,7 @@ import { offlineGet } from '../lib/offlineDb';
 import { PdfBlock, clinicHeaderBlock, docStamp, exportArabicDocumentPdf, footerBlock } from '../lib/arabicPdf';
 import { getClinicProfile } from '../lib/clinicProfile';
 import { categoryLabel, currentYearMonth, fmtDateTime, todayISO } from '../lib/format';
+import { saveDocument } from '../lib/native';
 import HistoryIcon from '@mui/icons-material/History';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import DownloadIcon from '@mui/icons-material/Download';
@@ -41,16 +42,6 @@ const CATEGORIES: Record<string, string> = {
   FINANCIAL: 'ملخص مالي',
 };
 
-const downloadBlob = (blob: Blob, filename: string) => {
-  const url = window.URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.setAttribute('download', filename);
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  window.URL.revokeObjectURL(url);
-};
 
 const normalizeData = (data: any): any[] => {
   if (Array.isArray(data)) return data;
@@ -239,7 +230,7 @@ export const ReportsPage: React.FC = () => {
       headers.join(','),
       ...rows.map((row: any) => headers.map((h) => `"${String(row[h] ?? '').replace(/"/g, '""')}"`).join(',')),
     ].join('\n');
-    downloadBlob(new Blob([`\uFEFF${csvContent}`], { type: 'text/csv;charset=utf-8;' }), `report-${todayISO()}.csv`);
+    void saveDocument(new Blob([`\uFEFF${csvContent}`], { type: 'text/csv;charset=utf-8;' }), `report-${todayISO()}.csv`);
   };
 
   const exportPDF = async () => {
@@ -284,7 +275,7 @@ export const ReportsPage: React.FC = () => {
     sheet.addRow(headers);
     rows.forEach((row: any) => { sheet.addRow(headers.map((h) => row[h] ?? '')); });
     const buffer = await workbook.xlsx.writeBuffer();
-    downloadBlob(new Blob([buffer]), `report-${todayISO()}.xlsx`);
+    void saveDocument(new Blob([buffer]), `report-${todayISO()}.xlsx`);
   };
 
   return (
