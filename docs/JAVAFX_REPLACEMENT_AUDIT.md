@@ -936,7 +936,7 @@ multipart configuration exists at all. Determines whether **D2–D10** (Option B
 
 **Stakeholder answer:**
 
-> _______________________________________________
+> **Option B — Server-backed patient media.**
 
 ---
 
@@ -955,7 +955,7 @@ in the server point in opposite directions, so the codebase does not determine t
 
 **Stakeholder answer:**
 
-> _______________________________________________
+> **Clinical media classification.**
 
 ---
 
@@ -975,7 +975,11 @@ restriction relative to current patient-data behaviour, not a preserved one.
 
 **Stakeholder answer:**
 
-> _______________________________________________
+> **Secretary MAY view patient media, but ONLY with Doctor-granted permission.**
+
+> _Recorded verbatim. This is a conditional grant, not the unconditional "Yes" enumerated above._
+> _The granting mechanism, its persistence and its revocation are not defined in this form and
+> remain unanswered. No such mechanism is assumed here._
 
 ---
 
@@ -1001,11 +1005,14 @@ between them.
 
 **Stakeholder answer, part 1:**
 
-> _______________________________________________
+> **B — Media is scoped to BOTH Patient + Uploader (`createdBy`).**
 
 **Stakeholder answer, part 2:**
 
-> _______________________________________________
+> **A — If `createdBy == null`, the media MUST NOT be accessible until an owner is assigned.**
+
+> _Recorded verbatim. The means by which an owner is assigned is not defined in this form and
+> remain unanswered. No assignment mechanism is assumed here._
 
 ---
 
