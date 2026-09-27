@@ -102,14 +102,13 @@ The importer `scripts/import-javafox-data.mjs` repairs the data bugs during migr
 | 10 | Manual server config | MET | — |
 | 11 | Auth / session expiry | MET | — |
 | 12 | Production HTTPS | **MET** | Phase 8 - HTTPS-only validation, production CSP has no `http:` |
-| 13 | Signed updates | **UNMET** | Phase 9 - no signing key yet |
+| 13 | Signed updates | **PARTIAL** | minisign signing live and verified against real artifacts; real E2E install cycle needs a published release |
 | 14 | No duplicated connection/auth/update impls | MET | — |
 | 15 | Backend tests pass | MET | 261/261 (246 + 15 new) |
 | 16 | Frontend tests for migrated flows | **PARTIAL** | vitest added, 58 tests; page-level tests still to come |
 | 17 | Production Windows installer | **PARTIAL** | 5.33 MB NSIS installer built and verified clean of Java; not yet run on a clean machine |
 
-**1 of 17 unmet (signed updates), 2 partial (frontend test depth, clean-machine
-installer run).** All of them are client-side work; none requires a backend change.
+**0 of 17 unmet outright; 3 partial** - signed updates (awaiting a real E2E install cycle), frontend test depth, and the clean-machine installer run.
 
 ---
 

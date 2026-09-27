@@ -22,7 +22,7 @@ import { offlineGet } from '../lib/offlineDb';
 import { fmtDateTime, fmtMoney, timeZoneLabel } from '../lib/format';
 import { DashboardCharts } from './DashboardCharts';
 import { useAuthStore } from '../stores/auth';
-import { checkForUpdate, downloadVerifiedUpdate, UpdateInfo } from '../lib/updateCheck';
+import { checkForUpdate, installUpdate, type UpdateInfo } from '../lib/updateCheck';
 import { useSseRefresh } from '../lib/useSseRefresh';
 import PersonIcon from '@mui/icons-material/Person';
 import CalendarMonthIcon from '@mui/icons-material/CalendarMonth';
@@ -65,6 +65,7 @@ export const DashboardPage: React.FC = () => {
   const [updateDismissed, setUpdateDismissed] = React.useState(false);
   const [updateError, setUpdateError] = React.useState<string | null>(null);
   const [updateBusy, setUpdateBusy] = React.useState(false);
+  const [updateProgress, setUpdateProgress] = React.useState<string | null>(null);
 
   const load = React.useCallback(async () => {
     setLoading(true);
@@ -108,16 +109,25 @@ export const DashboardPage: React.FC = () => {
   const isAdmin = role === 'ADMIN';
   const isDoctor = role === 'DOCTOR';
 
-  const handleUpdateDownload = async () => {
+  const handleUpdateInstall = async () => {
     if (!updateInfo || updateBusy) return;
     setUpdateBusy(true);
     setUpdateError(null);
     try {
-      await downloadVerifiedUpdate(updateInfo);
+      await installUpdate(updateInfo, ({ downloaded, total }) => {
+        setUpdateProgress(
+          total > 0 ? `${Math.round((downloaded / total) * 100)}%` : null
+        );
+      });
+      // On Windows install() launches the installer and exits, so reaching here without
+      // an error means the process is on its way out.
     } catch (err: any) {
-      setUpdateError(err?.message || 'Update download failed.');
+      // The installed version is untouched: the plugin verifies before it writes, and
+      // install is only reached once the signature matched.
+      setUpdateError(err?.message || 'فشل تثبيت التحديث.');
     } finally {
       setUpdateBusy(false);
+      setUpdateProgress(null);
     }
   };
 
@@ -139,21 +149,19 @@ export const DashboardPage: React.FC = () => {
 
       {loadError && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setLoadError(null)}>{loadError}</Alert>}
 
-      {updateInfo && !updateDismissed && (
+      {updateInfo?.available && !updateDismissed && (
         <Alert
-          severity={updateInfo.forceUpdate ? 'warning' : 'info'}
+          severity="info"
           sx={{ mb: 2 }}
-          onClose={updateInfo.forceUpdate ? undefined : () => setUpdateDismissed(true)}
+          onClose={() => setUpdateDismissed(true)}
           action={
-            updateInfo.downloadUrl || updateInfo.msiUrl ? (
-              <Button color="inherit" size="small" disabled={updateBusy} onClick={handleUpdateDownload}>
-                {updateBusy ? 'جارٍ التحقق…' : 'تحميل'}
-              </Button>
-            ) : undefined
+            <Button color="inherit" size="small" disabled={updateBusy} onClick={handleUpdateInstall}>
+              {updateBusy ? (updateProgress ?? 'جارٍ التحقق…') : 'تثبيت'}
+            </Button>
           }
         >
-          <strong>تحديث جديد متاح</strong> — الإصدار {updateInfo.latestVersion}
-          {updateInfo.releaseNotes && ` — ${updateInfo.releaseNotes}`}
+          <strong>تحديث جديد موقّع متاح</strong> — الإصدار {updateInfo.latestVersion}
+          {updateInfo.notes && ` — ${updateInfo.notes}`}
         </Alert>
       )}
 

@@ -19,6 +19,17 @@ src-tauri/gen/schemas/
 .env.local
 .env.*.local
 
+# Updater signing keys. The production private key lives outside this repository, in
+# %USERPROFILE%\.zeyara\signing. These entries are defence in depth: if a key is ever
+# copied or generated here by mistake, it must not be committable.
+*.key
+*.key.pub
+updater.key
+updater.key.pub
+*.sig
+!src-tauri/gen/schemas/*.sig
+tauri-private.key
+
 # ─── Logs & diagnostics ───────────────────────────────────────────────────────
 *.log
 tsc-output.txt

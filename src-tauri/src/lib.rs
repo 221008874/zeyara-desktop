@@ -81,6 +81,11 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
+        // Signed updates. The minisign public key lives in tauri.conf.json and is compiled
+        // into the binary, so an artifact is trusted because it was signed by the release
+        // key rather than because a hash matched. No public key means the updater is inert;
+        // there is deliberately no unsigned path.
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(heartbeat::HeartbeatController::new())
         .on_window_event(|window, event| {
             // Intercept close requests so the frontend can run an async

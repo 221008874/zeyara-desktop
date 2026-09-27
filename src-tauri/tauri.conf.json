@@ -40,6 +40,16 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "createUpdaterArtifacts": false
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "active": true,
+      "dialog": false,
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEY3RjcwNEYyQkFGMTMyOEUKUldTT012RzY4Z1QzOTVnMEloZ25jcVBFMVB0TFNjU0UxOUQwVmRWK0hqSkhUVi9DSXFJc3A1czcK",
+      "endpoints": [
+        "https://github.com/221008874/zeyara-desktop/releases/latest/download/latest.json"
+      ]
+    }
   }
 }

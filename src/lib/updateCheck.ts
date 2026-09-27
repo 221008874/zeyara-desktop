@@ -1,147 +1,183 @@
-import { getBaseUrl } from './api';
 import { getAppVersion } from './version';
 import { isFetchableUrl } from './serverUrl';
+import { decideUpdate, type UpdateDecision } from './updatePolicy';
 
-const APP_ID = 'desktop';
+/**
+ * Update handling.
+ *
+ * Verification is delegated to `tauri-plugin-updater`, which checks a minisign signature
+ * produced by the release signing key against the public key compiled into this build.
+ * That public key is the only trust anchor: an artifact is accepted because it was signed
+ * by the release key, not because a hash matched.
+ *
+ * This replaces a hand-rolled path that downloaded the artifact and compared a SHA-256
+ * which had arrived over the same channel as the artifact. That was self-referential -
+ * anything able to swap the file could swap the expected hash with it - and it had no
+ * notion of a downgrade. There is deliberately **no unsigned fallback**: if the plugin
+ * will not verify a release, no release is offered, and the installed version stays.
+ */
+
+export const APP_ID = 'desktop';
+
+/** The Tauri target string for the running platform, e.g. `windows-x86_64`. */
+export function currentTarget(): string {
+  const arch =
+    typeof navigator !== 'undefined' && /arm64|aarch64/i.test(navigator.userAgent)
+      ? 'aarch64'
+      : 'x86_64';
+  const os =
+    typeof navigator !== 'undefined' && /Win/i.test(navigator.userAgent)
+      ? 'windows'
+      : typeof navigator !== 'undefined' && /Mac/i.test(navigator.userAgent)
+        ? 'darwin'
+        : 'linux';
+  return `${os}-${arch}`;
+}
 
 export interface UpdateInfo {
   available: boolean;
-  latestVersion: string | null;
-  downloadUrl: string | null;
-  msiUrl: string | null;
-  releaseNotes: string | null;
-  releaseDate: string | null;
-  forceUpdate: boolean;
+  /** The version actually running, from the Tauri runtime. */
   currentVersion: string;
-  /** SHA-256 of the installer artifact, as published by the server. */
-  checksum: string | null;
+  latestVersion: string | null;
+  notes: string | null;
+  date: string | null;
+  /** The manifest carried a non-empty signature for this platform. */
+  signed: boolean;
+  decision: UpdateDecision | null;
+  /** Artifact URL for this platform, when the manifest exposed one. */
+  artifactUrl: string | null;
+}
+
+export interface InstallProgress {
+  downloaded: number;
+  total: number;
+}
+
+export interface InstallResult {
+  version: string;
+}
+
+const nothingToOffer = (currentVersion: string): UpdateInfo => ({
+  available: false,
+  currentVersion,
+  latestVersion: null,
+  notes: null,
+  date: null,
+  signed: false,
+  decision: null,
+  artifactUrl: null,
+});
+
+/** Reads the per-platform artifact entry out of the raw updater manifest. */
+function platformEntry(rawJson: unknown): { url?: string; signature?: string } | null {
+  if (!rawJson || typeof rawJson !== 'object') return null;
+  const platforms = (rawJson as Record<string, unknown>).platforms;
+  if (!platforms || typeof platforms !== 'object') return null;
+  const entry = (platforms as Record<string, unknown>)[currentTarget()];
+  if (!entry || typeof entry !== 'object') return null;
+  return entry as { url?: string; signature?: string };
 }
 
 /**
- * Non-blocking check for a newer release from the server's update endpoint.
- * Returns null on any network/error (best-effort, never blocks the UI).
+ * Asks whether a signed update exists.
+ *
+ * Never throws and never blocks the UI. A network failure, an unreachable endpoint, a
+ * manifest with no artifact for this platform, or a malformed version all resolve to
+ * "no update", leaving the installed version exactly as it is.
  */
-export async function checkForUpdate(): Promise<UpdateInfo | null> {
-  const base = getBaseUrl();
-  if (!base) return null;
+export async function checkForUpdate(): Promise<UpdateInfo> {
+  const currentVersion = await getAppVersion();
+
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5000);
-    // The version the server compares against must be the one this build actually is,
-    // otherwise the server compares against a stale literal and can never offer a newer
-    // release to a correctly-built installer.
-    const currentVersion = await getAppVersion();
-    const res = await fetch(
-      `${base}/api/update/check?app=${APP_ID}&currentVersion=${encodeURIComponent(currentVersion)}`,
-      {
-        headers: { 'Content-Type': 'application/json' },
-        cache: 'no-store',
-        signal: controller.signal,
-      }
-    );
-    clearTimeout(timeout);
-    if (!res.ok) return null;
-    const json = await res.json();
-    if (!json.updateAvailable) return null;
+    const { check } = await import('@tauri-apps/plugin-updater');
+    const update = await check();
+    if (!update) return nothingToOffer(currentVersion);
+
+    const latest = update.version;
+
+    // Refuse a downgrade even if the plugin's own comparison were to change.
+    const decision = decideUpdate(currentVersion, latest);
+    if (!decision.offer) {
+      return { ...nothingToOffer(currentVersion), latestVersion: latest, decision };
+    }
+
+    const entry = platformEntry(update.rawJson);
+    const url = typeof entry?.url === 'string' ? entry.url : null;
+    const signature = typeof entry?.signature === 'string' ? entry.signature : '';
+
+    // Defence in depth. The configured metadata endpoint is asserted to be https by a
+    // test on tauri.conf.json; the artifact URL comes from the manifest, so it is
+    // re-checked here. A manifest naming an http artifact is refused.
+    if (url && !isFetchableUrl(url)) {
+      return {
+        ...nothingToOffer(currentVersion),
+        latestVersion: latest,
+        decision,
+        artifactUrl: url,
+      };
+    }
+
     return {
       available: true,
-      latestVersion: json.latestVersion ?? null,
-      downloadUrl: json.downloadUrl ?? json.msiUrl ?? null,
-      msiUrl: json.msiUrl ?? null,
-      releaseNotes: json.releaseNotes ?? null,
-      releaseDate: json.releaseDate ?? null,
-      forceUpdate: json.forceUpdate === true,
       currentVersion,
-      checksum: json.checksum ?? null,
+      latestVersion: latest,
+      notes: update.body ?? null,
+      date: update.date ?? null,
+      signed: signature.length > 0,
+      decision,
+      artifactUrl: url,
     };
   } catch {
-    return null;
+    return nothingToOffer(currentVersion);
   }
-}
-
-/** Normalises a published checksum to lowercase hex, accepting `sha256:<hex>` prefixes. */
-function normaliseChecksum(value: string): string {
-  const trimmed = value.trim().toLowerCase().replace(/^sha-?256[:=]/, '');
-  return trimmed.replace(/^0x/, '');
-}
-
-async function sha256Hex(buffer: ArrayBuffer): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', buffer);
-  return Array.from(new Uint8Array(digest))
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('');
-}
-
-export interface VerifiedUpdate {
-  downloadUrl: string;
-  verified: boolean;
-  expectedChecksum: string | null;
 }
 
 /**
- * Downloads the update artifact and verifies its SHA-256 against the checksum the
- * server published for that exact release. An unverified artifact is never handed
- * to the OS installer.
+ * Downloads, verifies and installs a signed update.
  *
- * The download is refused when:
- *  - no checksum was published (we cannot prove the artifact is authentic), or
- *  - the served bytes do not match the published checksum (tampered / wrong file).
+ * The signature is verified inside `download()` on the Rust side, before the artifact is
+ * written. Any failure throws, and nothing about the installed version changes, so a
+ * network, download or signature failure leaves the current version running and usable.
  *
- * @throws if the artifact cannot be fetched or fails verification.
+ * On Windows `install()` launches the installer and exits the app, so a resolved promise
+ * here means the installer was started.
  */
-export async function downloadVerifiedUpdate(info: UpdateInfo): Promise<VerifiedUpdate> {
-  const url = info.msiUrl || info.downloadUrl;
-  if (!url) throw new Error('No download URL was published for this release.');
-
-  // The expected checksum arrives over the same channel as the artifact, so over plain
-  // HTTP the verification is self-referential: anything able to swap the installer can
-  // swap the expected hash with it. A production build only accepts an https artifact.
-  if (!isFetchableUrl(url)) {
-    throw new Error(
-      `The published download URL is not a permitted transport (${new URL(url).protocol}//). ` +
-        'Refusing to download over an unverified channel.'
-    );
+export async function installUpdate(
+  info: UpdateInfo,
+  onProgress?: (p: InstallProgress) => void
+): Promise<InstallResult> {
+  if (!info.available) {
+    throw new Error('لا يوجد تحديث موثّق-signature متاح للتثبيت.');
+  }
+  if (!info.signed) {
+    throw new Error('تم رفض التثبيت: الإصدار لا يحمل توقيعاً صالحاً.');
+  }
+  if (info.artifactUrl && !isFetchableUrl(info.artifactUrl)) {
+    throw new Error('تم رفض التثبيت: ملف التحديث يُقدَّم عبر قناة غير موثوقة.');
   }
 
-  const expected = info.checksum ? normaliseChecksum(info.checksum) : null;
-  if (!expected) {
-    throw new Error(
-      'This release has no published checksum, so the installer cannot be verified. Refusing to download.'
-    );
+  const { check } = await import('@tauri-apps/plugin-updater');
+  const update = await check();
+  if (!update) {
+    throw new Error('لم يعد الخادم يعرض هذا الإصدار.');
   }
 
-  const res = await fetch(url, { cache: 'no-store' });
-  if (!res.ok) throw new Error(`Failed to download update (HTTP ${res.status}).`);
+  let downloaded = 0;
+  let total = 0;
 
-  const buffer = await res.arrayBuffer();
-  const actual = await sha256Hex(buffer);
-  if (actual !== expected) {
-    throw new Error(
-      `Update verification failed. Expected SHA-256 ${expected} but the downloaded file hashed to ${actual}. The installer was discarded.`
-    );
-  }
+  await update.download((event) => {
+    if (event.event === 'Started') {
+      total = event.data.contentLength ?? 0;
+      downloaded = 0;
+      onProgress?.({ downloaded, total });
+    } else if (event.event === 'Progress') {
+      downloaded += event.data.chunkLength;
+      onProgress?.({ downloaded, total });
+    }
+  });
 
-  const blob = new Blob([buffer], { type: 'application/octet-stream' });
-  const objectUrl = URL.createObjectURL(blob);
-  const filename = artifactFilename(url, info.latestVersion);
-  const anchor = document.createElement('a');
-  anchor.href = objectUrl;
-  anchor.download = filename;
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+  // Signature already verified by download(). Install on Windows exits the process.
+  await update.install();
 
-  return { downloadUrl: url, verified: true, expectedChecksum: expected };
-}
-
-/** Prefers the file name published by the server, so `.jar`/`.msi`/`.exe` all save correctly. */
-function artifactFilename(url: string, version: string | null): string {
-  try {
-    const last = new URL(url, 'https://localhost').pathname.split('/').filter(Boolean).pop();
-    if (last && /\.[A-Za-z0-9]{2,5}$/.test(last)) return decodeURIComponent(last);
-  } catch {
-    /* fall through to the generic name */
-  }
-  return `Zeyara-Update-${version || 'latest'}`;
+  return { version: update.version };
 }
