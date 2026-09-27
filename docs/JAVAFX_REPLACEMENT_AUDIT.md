@@ -1034,7 +1034,20 @@ media has the same property unless D4 gives it one.
 
 **Stakeholder answer:**
 
-> _______________________________________________
+> **A — Doctor + Admin may delete Patient Media.**
+
+> _Recorded verbatim. The option table above offered "ADMIN only", "Uploader" and
+> "Patient owner + ADMIN"; this answer is a different rule and is stored as given._
+
+> _Stakeholder rationale, recorded verbatim:_
+> _- The uploader is the Doctor in the current workflow._
+> _- Patients do not have access to the local desktop system and therefore cannot upload or
+>   delete media._
+> _- Do not create a separate uploader permission, because uploader access is covered by the
+>   Doctor role._
+
+> _The third point is a stakeholder instruction, not an inference: it forecloses a separate
+> uploader permission or role. No further mechanism is defined here._
 
 ---
 
