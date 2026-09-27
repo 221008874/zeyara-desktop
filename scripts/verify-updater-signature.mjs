@@ -25,9 +25,12 @@ function parseMinisignText(text) {
  * Tauri writes both the public key and the signature as a single base64 blob that
  * decodes to the minisign document. Accept either that form or a plain .minisig text file.
  *
- * Throws with a clear reason on anything unusable, so a missing or empty signature is a
- * clean "INVALID" rather than an unhandled crash. Failing closed matters: a verifier that
- * throws has not decided anything.
+ * Strict on purpose. An earlier version merely checked that the decoded text *contained*
+ * "untrusted comment", and because the updater manifest embeds the signature as a
+ * base64 field, leniently base64-decoding the whole JSON reconstructed a valid
+ * signature line - so passing latest.json where a .sig was expected reported VALID.
+ * A verifier that can be fooled by the wrong file has not verified anything, so the
+ * document is required to actually be a minisign document.
  */
 function readMaybeWrapped(path, what) {
   let raw;
@@ -37,8 +40,30 @@ function readMaybeWrapped(path, what) {
     throw new Error(`${what} file is missing or unreadable: ${path}`);
   }
   if (!raw) throw new Error(`${what} file is empty: ${path}`);
+
+  // An updater manifest is not a signature, even though it contains one.
+  if (raw.startsWith('{')) {
+    throw new Error(
+      `${path} is an updater manifest (JSON), not a ${what}. Pass the .sig file itself.`
+    );
+  }
+
+  if (looksLikeMinisign(raw)) return raw;
+
   const decoded = Buffer.from(raw, 'base64').toString('utf8');
-  return decoded.includes('untrusted comment') ? decoded : raw;
+  if (looksLikeMinisign(decoded)) return decoded;
+
+  throw new Error(`${path} is not a minisign ${what} document`);
+}
+
+function looksLikeMinisign(text) {
+  const lines = text.split(/\r?\n/).filter((l) => l.length > 0);
+  if (lines.length < 2) return false;
+  if (!lines[0].startsWith('untrusted comment:')) return false;
+  if (!/^[A-Za-z0-9+/=]+$/.test(lines[1])) return false;
+  const blob = Buffer.from(lines[1], 'base64');
+  // A public key blob is 42 bytes (alg + key id + 32-byte key); a signature is 74.
+  return blob.length === 42 || blob.length === 74;
 }
 
 const [, , pubPath, sigPath, artifactPath] = process.argv;

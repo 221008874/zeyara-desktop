@@ -104,12 +104,19 @@ try {
   console.log('\n── edited trusted comment ──────────────────');
   // The trusted comment carries the filename and timestamp. Rewriting the filename while
   // keeping the artifact signature must fail, or an attacker could relabel a build.
+  // The name is derived from the artifact under test rather than hardcoded, so this keeps
+  // working for any version.
+  const realName = artifactPath.split(/[\\/]/).pop();
   const raw = readFileSync(sigPath, 'utf8').trim();
   const inner = Buffer.from(raw, 'base64').toString('utf8');
-  const edited = inner.replace('Zeyara_1.0.0_x64-setup.exe', 'Zeyara_9.9.9_x64-setup.exe');
-  const editedSig = join(work, 'edited.sig');
-  writeFileSync(editedSig, edited);
-  check('an edited trusted comment is rejected', false, pubPath, editedSig, artifactPath);
+  if (!inner.includes(realName)) {
+    console.log(`   SKIP  trusted comment does not mention ${realName}`);
+  } else {
+    const edited = inner.replace(realName, 'tampered-label-setup.exe');
+    const editedSig = join(work, 'edited.sig');
+    writeFileSync(editedSig, edited);
+    check('an edited trusted comment is rejected', false, pubPath, editedSig, artifactPath);
+  }
 
   console.log('\n── corrupted signature ─────────────────────');
   const sigInner = Buffer.from(raw, 'base64');
