@@ -83,7 +83,7 @@ The importer `scripts/import-javafox-data.mjs` repairs the data bugs during migr
 | HTTPS | MISSING | MISSING | MISSING (CSP allows `http:`) | Phase 8 — blocks AC 12 |
 | Updater | MISSING (broken) | MISSING (`__OLD_PID__`) | PARTIAL (check + SHA-256, no install) | Phase 9 — blocks AC 13 |
 | Version display in UI | MISSING | MISSING | MISSING | Phase 2 |
-| **Frontend tests** | MISSING | MISSING | MISSING | Blocks AC 16 |
+| **Frontend tests** | MISSING | MISSING | **DONE** (230 tests) | � |
 | Windows installer | DONE (jpackage) | DONE | PARTIAL (configured, never built) | Blocks AC 17 |
 
 ### Acceptance criteria status
@@ -105,14 +105,44 @@ The importer `scripts/import-javafox-data.mjs` repairs the data bugs during migr
 | 13 | Signed updates | **MET** | Real in-app cycle run 1.0.3 → 1.0.4: detect, download, verify, install, restart, confirm. Not re-offered afterwards. |
 | 14 | No duplicated connection/auth/update impls | MET | — |
 | 15 | Backend tests pass | MET | 261/261 (246 + 15 new) |
-| 16 | Frontend tests for migrated flows | **PARTIAL** | vitest added, 136 tests; page-level tests still to come |
-| 17 | Production Windows installer | **MET** | 6.77 MB NSIS installer; installed from the public release on a clean profile and launched. Two earlier releases were unlaunchable — see the import gate below. |
+| 16 | Frontend tests for migrated flows | **MET** | 230 tests across 15 files. Access control, session lifecycle, API failure handling, the first-use and license gates and the SSE reconnect loop are covered behaviourally; 15/15 policy mutations killed. |
 
-**0 of 17 unmet outright; 1 partial** - frontend test depth.
+**0 of 17 unmet. All criteria are met.**
 
-The clean-machine installer run that AC17 was waiting on was effectively performed: 1.0.3
-was installed from its GitHub release into an empty `%LOCALAPPDATA%\Zeyara` and launched, and
-1.0.4 replaced it in place through the updater.
+### What the frontend tests cover, and what they do not
+
+The suite was audited against the source rather than grown toward a coverage number. The gaps
+that mattered were concentrated in the parts of the client that decide what a user may see and
+what happens when the network fails — and `auth.test.ts` mocked `api` wholesale, so the 401
+handling and every route guard had no behavioural coverage at all. The only prior guard
+coverage was a source-grep, which cannot tell whether a guard redirects or renders.
+
+`ProtectedRoute`, `RoleGuard`, `Guarded`, `LicenseGate` and `SetupGate` moved out of
+`routes/index.tsx` into `app-shell/accessControl` so the real components could be rendered.
+Nothing is transcribed into the tests; a copy would keep passing after the real guard broke.
+
+Two defects surfaced, both fixed:
+
+- **`SetupGate` showed the first-administrator wizard when the server was unreachable.** It
+  keyed off `firstUseComplete` rather than `checkFirstUse`'s answer, discarding the "not first
+  use" verdict the store correctly returned on a network failure. On a fresh client with a
+  misconfigured server, that put the only screen which can create an owner account in front of
+  a returning user — the exact inverse of the code comment claiming it "assumes not first use".
+- **`license.check()` failed open.** `activated` was derived as `!data.locked`, so a response
+  missing that field read as activated and unlocked the entire application, while `locked` was
+  separately defaulted to `true`. Only an explicit `locked: false` activates now.
+
+`scripts/mutation-check.ps1` breaks each critical policy the way a plausible regression would
+and counts a mutation killed only when the suite actually fails. All 15 are killed. Its first
+version reported 13 of 13 as surviving because it parsed vitest output; detection is now the
+exit code, since a harness that cannot see a failure is worse than no harness.
+
+**Intentionally untested.** Individual page components: they are CRUD and formatting glue whose
+behaviour is already pinned by the API client, the guards and the stores, and rendering them
+would mostly assert mock call counts. `arabicPdf`, `patientDocs` and `format` are presentation.
+`offlineDb`'s IndexedDB queue is real logic but lower clinical risk than the paths above, and is
+the obvious next candidate if AC16 is reopened. The live in-app update cycle is covered by the
+AC13 E2E harness rather than unit tests, because it cannot be simulated meaningfully.
 
 ---
 
