@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Zeyara",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "identifier": "com.zeyara.desktop",
   "build": {
     "frontendDist": "../dist",
@@ -40,7 +40,10 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "createUpdaterArtifacts": true
+    "createUpdaterArtifacts": true,
+    "resources": {
+      "target/release/WebView2Loader.dll": "WebView2Loader.dll"
+    }
   },
   "plugins": {
     "updater": {
