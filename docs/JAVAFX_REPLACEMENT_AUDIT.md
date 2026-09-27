@@ -899,6 +899,404 @@ Overall = NOT_READY
 **Decisions answered: 0 of 11.** Technical investigation is exhausted; what remains is a
 decision that only the clinic can make.
 
+## B1.8 Specification input questionnaire
+
+**This is an input form, not a specification.** It exists so the outstanding B1 items can be
+answered explicitly by the stakeholder who owns them.
+
+Rules that govern this section:
+
+- **No answer is pre-filled.** Every answer field below is deliberately blank.
+- **No default, no recommendation, no inferred value.** Where earlier sections of this
+  document record analysis or a recommendation, that analysis is **not** an answer and does
+  not populate any field here.
+- **C1–C6 are not questions.** They are verified technical constraints on the existing system
+  (§B1.5.2). They are not converted into stakeholder choices and must not be answered here.
+  They constrain the answers.
+- **No implementation task is created by this section.** Prerequisites and task planning
+  begin only after an approved specification exists.
+
+Each item states the question, what the answer controls, and a blank field.
+
+---
+
+### D1 — Storage model
+
+**Question.** Should patient media be **local-only to the client** (Option A) or
+**server-backed** (Option B)?
+
+| | |
+|---|---|
+| Option A | Local-only. No media leaves the client machine. |
+| Option B | Server-backed. The Clinic Server owns the media. |
+
+**Decision impact.** Controls whether any Clinic Server endpoint, table, storage layer or
+multipart configuration exists at all. Determines whether **D2–D10** (Option B) or **D11**
+(Option A) are the live questions; the remainder become not-applicable.
+
+**Stakeholder answer:**
+
+> _______________________________________________
+
+---
+
+### D2 — Media classification *(asked only if D1 = Option B)*
+
+**Question.** Is patient media **clinical** or **administrative**?
+
+| | |
+|---|---|
+| Clinical | Governed like prescribing data. |
+| Administrative | Governed like financial/administrative records. |
+
+**Decision impact.** Controls the read **and** write authorization rule applied to every media
+endpoint, and therefore the entire authorization matrix. The two nearest existing precedents
+in the server point in opposite directions, so the codebase does not determine this.
+
+**Stakeholder answer:**
+
+> _______________________________________________
+
+---
+
+### D3 — SECRETARY read access *(asked only if D1 = Option B)*
+
+**Question.** May a **SECRETARY** view media belonging to a **doctor's** patient?
+
+| | |
+|---|---|
+| Yes | — |
+| No | — |
+
+**Decision impact.** Controls the SECRETARY branch of the read rule, and whether the media
+rule matches the existing posture of `/api/patients/**` (`authenticated()`, filtered by
+ownership) or of `/api/medications/**` (`hasAnyRole("ADMIN","DOCTOR")`). "No" would be a new
+restriction relative to current patient-data behaviour, not a preserved one.
+
+**Stakeholder answer:**
+
+> _______________________________________________
+
+---
+
+### D4 — Ownership model and `createdBy == null` *(asked only if D1 = Option B)*
+
+**Question, part 1 — ownership scope.** Is media scoped to the **patient**, to the **uploader**,
+or to **both** (patient-visible, uploader-attributed)?
+
+**Question, part 2 — ownerless records.** What is the behaviour for media on a patient whose
+`createdBy` is `null` — that is, a community/online booking?
+
+| | |
+|---|---|
+| Part 1 | patient / uploader / both |
+| Part 2 | deny / allow / allow-read-only / dedicated rule |
+
+**Decision impact.** Controls the owner column in any media table, every ownership check on
+media, and the visibility of media attached to community-booked patients. Per **C4**,
+`SecurityUtil.checkOwnership` returns no-op for a `null` `createdBy`, so an unmodified reuse
+would leave that media readable and writable by every authenticated user. The two scoping
+options have incompatible effects and both are defensible; the codebase does not choose
+between them.
+
+**Stakeholder answer, part 1:**
+
+> _______________________________________________
+
+**Stakeholder answer, part 2:**
+
+> _______________________________________________
+
+---
+
+### D5 — Deletion rights *(asked only if D1 = Option B)*
+
+**Question.** Who may delete media?
+
+| | |
+|---|---|
+| ADMIN only | — |
+| Uploader | — |
+| Patient owner + ADMIN | — |
+| Other | — |
+
+**Decision impact.** Controls the delete endpoint's authorization rule, and whether a delete
+path is created at all. The only existing precedent for destroying shared records by role is
+`DELETE /api/notifications/**`, restricted to ADMIN because that table has no owner column —
+media has the same property unless D4 gives it one.
+
+**Stakeholder answer:**
+
+> _______________________________________________
+
+---
+
+### D6 — Retention and patient deletion *(asked only if D1 = Option B)*
+
+**Question, part 1 — retention period.** How long is media retained? Is there a legal or
+clinical obligation driving it?
+
+**Question, part 2 — cascade.** Does deleting a patient delete their media?
+
+| | |
+|---|---|
+| Part 1 | ____________ (state the period, or "indefinite") |
+| Part 2 | yes / no / retain as orphan deliberately |
+
+**Decision impact.** Controls the entry added to the hand-written cascade in
+`PatientService.deletePatient` (§ **C6** — the method is class-level `@Transactional`, so an
+added line commits atomically, but there is no JPA cascade so it must be added explicitly),
+whether any expiry job exists, and whether media is included in the existing backup/restore
+flow. Per **C1** the media bytes live outside the database, so backup inclusion is a separate
+decision from the retention period.
+
+**Stakeholder answer, part 1:**
+
+> _______________________________________________
+
+**Stakeholder answer, part 2:**
+
+> _______________________________________________
+
+---
+
+### D7 — Association scope *(asked only if D1 = Option B)*
+
+**Question.** Is media **patient-scoped only**, or **patient- and appointment-scoped**?
+
+| | |
+|---|---|
+| Patient only | — |
+| Patient + appointment | — |
+
+**Decision impact.** Controls the association column or columns, and whether media inherits
+appointment visibility semantics. The legacy gallery is patient-scoped only, so appointment
+scoping would be new scope with no existing behaviour to inherit.
+
+**Stakeholder answer:**
+
+> _______________________________________________
+
+---
+
+### D8 — Tombstones *(asked only if D1 = Option B)*
+
+**Question.** Are media **tombstones** required, so desktop clients can purge media deleted
+elsewhere?
+
+| | |
+|---|---|
+| Yes | — |
+| No | — |
+
+**Decision impact.** Controls whether a tombstone table mirroring the existing
+`DeletedPatient` is created, and whether a client sync contract for media deletion is needed.
+`DeletedPatient` exists precisely because patient deletion is a hard delete that desktop
+clients cannot otherwise observe. Whether clients cache media at all is not established, so
+the codebase does not determine this.
+
+**Stakeholder answer:**
+
+> _______________________________________________
+
+---
+
+### D9 — Audit logging and resource identification *(asked only if D1 = Option B)*
+
+**Question, part 1 — is access logged?** Must media uploads, views and deletions be
+audit-logged?
+
+**Question, part 2 — queryability.** Must the audit trail be queryable by patient, which would
+require the audit record to identify the media resource?
+
+| | |
+|---|---|
+| Part 1 | yes / no |
+| Part 2 | yes (schema change) / no (free-text details acceptable) |
+
+**Decision impact.** Controls whether audit events are emitted, and whether `AuditEvent` gains
+a resource/target field. The existing `AuditEvent` has nine fields and **no** resource
+identifier, so a media event recorded today is not queryable or joinable. Part 2 selecting
+"schema change" implies a Clinic Server migration, which is in scope only once answered.
+`PatientController` currently emits no audit events at all.
+
+**Stakeholder answer, part 1:**
+
+> _______________________________________________
+
+**Stakeholder answer, part 2:**
+
+> _______________________________________________
+
+---
+
+### D10 — TLS guarantee *(asked only if D1 = Option B)*
+
+**Question.** Is TLS guaranteed **before any media upload is enabled**? If so, how is that
+guarantee enforced — deployment-only, or checked in code so the upload path refuses to run
+without it?
+
+| | |
+|---|---|
+| Deployment-only | — |
+| Enforced in code | — |
+| Other | — |
+
+**Decision impact.** Controls whether the upload path may be enabled at all, and whether a
+runtime precondition is implemented. Per **C5** the server ships
+`server.ssl.enabled=false` on `server.address=0.0.0.0`; enabling media upload over cleartext
+is therefore not an available option, and the remaining choice is **how** TLS is guaranteed
+rather than whether.
+
+**Stakeholder answer:**
+
+> _______________________________________________
+
+---
+
+### D11 — Legacy defect disposition *(asked only if D1 = Option A)*
+
+**Question.** For each legacy media defect M1–M14 listed in §B1.1, is it **fixed** or
+**deliberately accepted**? An accepted defect requires a recorded reason.
+
+| ID | Defect (abbreviated) | Fixed or accepted | Reason if accepted |
+|---|---|---|---|
+| M1 | Folder keyed on a machine-local SQLite id | ____ | ____ |
+| M2 | Folder name embeds the patient name | ____ | ____ |
+| M3 | `sanitizeFileName` strips non-Latin characters | ____ | ____ |
+| M4 | `mkdirs()` return values ignored | ____ | ____ |
+| M5 | `*.*` filter defeats the extension list | ____ | ____ |
+| M6 | No size cap, quota or count limit | ____ | ____ |
+| M7 | Extension whitelist narrower than reality | ____ | ____ |
+| M8 | Copy on the UI thread, no progress or cancel | ____ | ____ |
+| M9 | Result dialog always styled as success | ____ | ____ |
+| M10 | `MediaPlayer` never disposed | ____ | ____ |
+| M11 | Non-transitive, overflow-prone comparator | ____ | ____ |
+| M12 | Synchronous directory scan per repaint | ____ | ____ |
+| M13 | No EXIF orientation handling | ____ | ____ |
+| M14 | No video thumbnails | ____ | ____ |
+
+**Decision impact.** Controls the scope of the Option A client implementation, and which
+inherited behaviours are reproduced on purpose. M1 and M5 are the two that cause silent data
+loss rather than inconvenience, and §B1.6 measured both consequences directly (all 102
+`Images`/`Videos` directories in the legacy tree are empty, and the gallery was never opened
+on the machine inspected).
+
+**Stakeholder answer:** the table above, completed in place.
+
+---
+
+## Required operational information
+
+These are not decisions. They are facts about the clinic's operation that the implementation
+cannot proceed without, and none can be derived from code or from a filesystem.
+
+### I2 — Production media volume and image/video mix
+
+**Question.** What is the expected production volume, and is the mix **image-only** or
+**image and video**? Roughly how many patients accumulate media, and at what rate?
+
+**Decision impact.** Controls the multipart size limits that must be set deliberately
+(**C2** — the 1 MB default rejects any photo today), the storage sizing, whether media must
+be streamed rather than buffered, and the failure/retry contract for large transfers. Video
+dominates every cost and risk in these areas.
+
+**Stakeholder answer:**
+
+> _______________________________________________
+
+---
+
+### I3 — Legal or clinical retention obligation
+
+**Question.** Is there any legal, regulatory or clinical retention obligation that applies to
+patient media — for example a minimum retention period, or a prohibition on deleting imagery
+before a retention window expires?
+
+**Decision impact.** Controls whether a retention period can be chosen at all (D6), whether
+patient deletion must be blocked or must purge media, and whether an expiry job may exist.
+Nothing of the kind is encoded anywhere in the system, and it must not be guessed.
+
+**Stakeholder answer:**
+
+> _______________________________________________
+
+---
+
+### I4 — Audit queryability by patient
+
+**Question.** Must the audit trail be queryable **by patient** — for example, to answer "who
+viewed this patient's photographs"?
+
+**Decision impact.** Determines whether D9 part 2 can be answered as free-text, or whether the
+audit schema must gain a resource identifier. A "yes" implies a Clinic Server migration and
+changes the compliance posture; a "no" keeps the change out of scope.
+
+**Stakeholder answer:**
+
+> _______________________________________________
+
+---
+
+### I5 — Deployment TLS posture
+
+**Question.** How is TLS provided in the clinic's deployment — a TLS-terminating reverse proxy
+in front of the Clinic Server, or `SSL_ENABLED=true` with a keystore on the server itself? Is
+it already in place today?
+
+**Decision impact.** Controls the TLS precondition in D10 and whether it can be a deployment
+assumption or must be checked in code. Per **C5** the application itself does not provide
+transport protection by default.
+
+**Stakeholder answer:**
+
+> _______________________________________________
+
+---
+
+### I6 — Migration of existing production media
+
+**Question.** Does the clinic hold media today that must be carried into the Tauri client? If
+so, how much, and is migration in scope? Is starting empty acceptable?
+
+**Decision impact.** Controls whether a migration path is required at all, and if so what it
+must resolve. The read-only inventory in §B1.6 found **zero** patient media on the machine
+inspected and therefore establishes nothing about the clinic's machines; a migration would
+also have to resolve the local-id keying defect M1, because legacy media folders are keyed on
+a machine-local SQLite identifier rather than the server patient id.
+
+**Stakeholder answer:**
+
+> _______________________________________________
+
+---
+
+## Approval rule
+
+> **An approved B1 specification exists only when D1–D11 and required I2–I6 information have
+> explicit stakeholder values. The current decision register is not itself an approved
+> specification.**
+
+Applied to the current state:
+
+| Layer | State |
+|---|---|
+| **C1–C6** | Verified technical constraints. Not questions. Not answerable here. |
+| **D1–D11** | **Unanswered — 0 of 11.** Every field above is blank. |
+| **I2–I6** | **Missing.** None can be derived from code or disk. |
+
+A blank field is a valid, expected state. It must not be filled by inference, by majority
+assumption, by analogy with another data class, or by the absence of contrary evidence.
+
+**No implementation task is created by this section.** Endpoint, table, entity, migration,
+multipart, storage, authorization, client and migration work all begin only from the approved
+specification that these answers produce.
+
+```text
+B1      = BLOCKED — DECISION_REQUIRED
+Overall = NOT_READY
+```
+
 ## 1. DR Doctor — workflow inventory (19 FXML → 28 workflows)
 
 Legacy app: single hard-coded role `"doctor"`, no role selection, no admin mode. Local SQLite
