@@ -1,6 +1,7 @@
 mod device;
 mod documents;
 mod heartbeat;
+mod update_e2e;
 
 use tauri::{Emitter, Manager, WindowEvent};
 
@@ -108,6 +109,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             documents::save_document,
             device::get_device_fingerprint,
+            update_e2e::update_e2e_config,
+            update_e2e::update_e2e_write_report,
             get_network_interfaces,
             start_heartbeat_monitor,
             stop_heartbeat_monitor,
