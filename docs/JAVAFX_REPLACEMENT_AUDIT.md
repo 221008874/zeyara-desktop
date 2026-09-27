@@ -692,6 +692,111 @@ none may be until D1 is answered and, if Option B, D2â€“D10 are too.
 `~/.clinicapp/patients/` media on the clinic's machines, to inform I1 and I2. That touches no
 code, changes no behaviour, and commits to nothing.
 
+## B1.6 Inventory evidence â€” measured facts only
+
+A read-only metadata inventory of the legacy patient-media locations on the development
+machine. **This section records measurements only. It answers none of D1â€“D11, and no
+business requirement is inferred from it.** File contents were never opened, rendered or
+copied; only names, extensions, lengths and timestamps were read.
+
+### Method and safety
+
+| | |
+|---|---|
+| Mode | Read-only. Directory listings and file metadata only |
+| Not done | No file opened, rendered, decoded, copied, moved, renamed, deleted or uploaded; no permission or attribute changed |
+| Tools | PowerShell `Get-ChildItem`, `Test-Path`, `Measure-Object` on metadata; no media file was read |
+| Scope | `%USERPROFILE%\.clinicapp\patients\` (the gallery tree) plus the sibling legacy trees documented in آ§B1.1, to establish whether media exists anywhere |
+
+**One measurement error was caught and corrected.** The first media scan used
+`Get-ChildItem -LiteralPath â€¦ -Include '*.jpg',â€¦`, where `-Include` is silently ignored when
+combined with `-LiteralPath`. It reported 49 "media files" which were in fact `.txt`, `.json`,
+`.pdf` and `.xlsx`. The scan was redone with an explicit `.Extension` test; the corrected result
+is **0**. The erroneous count is recorded here rather than quietly discarded, because the
+figures below depend on it being right.
+
+### 1â€“2. Inventory target: the gallery tree
+
+| Measure | Value |
+|---|---|
+| Path | `%USERPROFILE%\.clinicapp\patients\` |
+| Exists | **No** |
+| Patient directories | **0** |
+| Media files | **0** |
+| Total bytes | **0** |
+
+The parent `%USERPROFILE%\.clinicapp\` **does** exist and contains exactly one file:
+`config.properties` (152 bytes). `~/ClinicDatabase/Clinic.db` (81,920 bytes) is also present,
+so the legacy application has been run on this machine.
+
+The gallery tree is created lazily by `ensurePatientMediaFolders()`
+(`patientDashboard.java:1674`), which is reached only from `openGallery()`. Its absence is
+therefore **consistent with the gallery never having been opened here**. It is *not* evidence
+that patient media does not exist on the clinic's production machines.
+
+### 3â€“9. Adjacent legacy locations
+
+Because the primary target is absent, the sibling trees were measured to establish whether
+media exists anywhere in the legacy footprint.
+
+| Location | Exists | Files | Bytes | Notes |
+|---|---|---|---|---|
+| `~/.clinicapp/patients/` (gallery) | No | 0 | 0 | media tree |
+| `~/patient/` | Yes | 17 | 1,208 | 17 patient dirs, 119 dirs total, **0 media files** |
+| `~/dp/prescriptions/` | Yes | 0 | 0 | empty |
+| `~/dp/diagnoses/` | Yes | 0 | 0 | empty |
+| `~/dp/exports/` | Yes | 4 | 5,559 | 3 أ— `.pdf`, 1 أ— `.json` |
+| `~/backup/` | Yes | 27 | 112,501 | 24 أ— `.xlsx`, 3 أ— `.json` |
+| `~/ClinicDatabase/` | Yes | 1 | 81,920 | `Clinic.db` |
+
+**Extension breakdown across all legacy locations:** `.xlsx` أ— 24, `.txt` أ— 17, `.json` أ— 4,
+`.pdf` أ— 3, `.db` أ— 1, `.properties` أ— 1. **Image extensions: 0. Video extensions: 0.**
+
+**This directly confirms the آ§B1.1 finding about the dead tree.** `~/patient/` contains 17
+patient directories (`1_a`, `1_abdo`, `2_Ahmed_`, `3_Abdalrhman_Ahmed_Abdalmonem`,
+`11_abdoooo`, â€¦) and exactly 6 subdirectories each â€” `Diagnoses`, `Images`, `Lab_Results`,
+`Prescriptions`, `Reports`, `Videos` â€” for 119 directories in total. **All 102 subdirectories
+contain zero files.** The only file in each patient directory is `Patient_Info.txt`. So
+`PathConstants.getPatientImagesFolder` / `getPatientVideosFolder` having no callers is not a
+theoretical observation: the directories exist, are created for every patient, and are empty.
+
+**Legacy activity window** (from `LastWriteTime` metadata): earliest artifact
+**2026-03-25 13:35**, latest **2026-07-18 15:31** â€” roughly four months of use, with 17
+patients and 24 Excel backups produced.
+
+### 10. Size distribution, image/video split, naming, duplicates
+
+**Not measurable â€” there are no media files.** Every distribution statistic (smallest,
+largest, median, percentiles), the image-versus-video count and byte split, the count of
+empty patient media directories, the count of unparseable `patient_{id}_{name}` directories,
+and the duplicate-filename count are all **undefined at 0 files**. No value is estimated or
+extrapolated. (For completeness: the 17 `~/patient` directories do all parse against a
+`{id}_{name}` shape, but that is the dead tree, not the gallery tree the question asked about.)
+
+### What this inventory does and does not tell us
+
+| Question | Informed? | Basis |
+|---|---|---|
+| **I1** â€” does existing media require cross-machine sharing? | **No** | There is no media to share. The filesystem cannot indicate a sharing requirement, and none is inferred. |
+| **I2** â€” expected volume and image/video mix | **No** | Zero files means no measured mix. The clinic's real mix is unknown and must be supplied. |
+| **I6** â€” should existing media be migrated? | **No** | Nothing exists here to migrate. Whether the clinic's machines hold media is still unanswered; this machine is a development machine. |
+
+**One measured fact is worth carrying forward**, stated without inference: on this machine
+the legacy application's *other* patient features were exercised â€” 17 patients, report PDFs,
+24 Excel backups over four months â€” while **the media gallery was never opened even once**.
+That is a fact about this machine only. It does not establish that the clinic does not use the
+gallery, and it must not be read as evidence that media is unnecessary.
+
+### Gate unchanged
+
+```text
+B1      = BLOCKED â€” DECISION_REQUIRED
+Overall = NOT_READY
+```
+
+**Decisions answered: 0 of 11.** The read-only inventory that was identified as safe to run
+has now been run; it produced no measurement that bears on D1â€“D11.
+
 ## 1. DR Doctor — workflow inventory (19 FXML → 28 workflows)
 
 Legacy app: single hard-coded role `"doctor"`, no role selection, no admin mode. Local SQLite
