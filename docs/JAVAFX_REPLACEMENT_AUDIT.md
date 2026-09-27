@@ -22,78 +22,477 @@ only working home for patient media.
 
 ---
 
-## B1 — Patient media gallery: decision required
+## B1 — Patient media: requirements and authorization analysis
 
-Not implemented. `Clinic Server` was **not** modified. This section exists so the choice can
-be made deliberately.
+**Status: `DECISION_REQUIRED`.** No code written, no endpoint, schema or storage change
+made, `Clinic Server` untouched, frontend behaviour unchanged.
 
-### What the legacy app does
-
-DR `patientDashboard.openGallery` creates
-`~/.clinicapp/patients/patient_{id}_{name}/{photos,videos}`, uploads images
-(`jpg jpeg png gif bmp webp`) and videos (`mp4 avi mov wmv mkv flv`) with `_1`/`_2`
-de-duplication, and previews them in a modal stage: images at 600×400 with **Open in
-Viewer**, videos through `MediaPlayer`/`MediaView` with **Play / Pause / Stop / Open in
-Player**, and a thumbnail pane per directory.
-
-Critically: **media is never uploaded to the server.** It lives in one user's profile
-directory. Another device, another user, and the server have no idea it exists. This was
-true in production, not an oversight in a test environment.
-
-### Option A — Local-only parity
-
-Reproduce the legacy behaviour exactly.
-
-- Patient media stays in the client profile directory; nothing is sent to the server.
-- No server persistence, no cross-device visibility, no sharing between receptionist and doctor.
-- Requires only client work: an upload capability in `src-tauri/capabilities/default.json`
-  (currently nothing can write an arbitrary path), a gallery UI on
-  `PatientDashboardPage`, and image/video preview.
-- **Cost:** smallest. **Trade-off:** faithfully reproduces a limitation. Two machines in the
-  same clinic see different galleries, and a reinstall or a profile reset loses the media.
-  It is only defensible if the clinic runs a single front-desk PC.
-- **Risk:** low. No server contract, no authorization question, nothing to migrate.
-
-### Option B — Server-backed media
-
-Media becomes clinic data that the server owns.
-
-Needs `Clinic Server` support for:
-
-| Concern | What is required |
-|---|---|
-| Upload | authenticated multipart endpoint, size and type limits, content validation |
-| Metadata | filename, MIME type, byte size, checksum, capture date |
-| Patient association | every record bound to a `patientId`, enforced server-side |
-| Retrieval | list and fetch per patient, with pagination |
-| Authorization | who may read and write — a doctor's clinical media is not necessarily a secretary's to read |
-| Storage lifecycle | on-disk layout, backup inclusion, retention, delete |
-
-- **Cost:** substantially larger. New endpoints, new authorization rules, storage and backup
-  changes, plus client upload/preview work.
-- **Benefit:** media is visible to the whole clinic, survives a reinstall, and can be backed
-  up and audited.
-- **Risk:** moderate. Patient clinical media is a privacy surface; the authorization matrix
-  has to be decided before the endpoints exist, not after.
-- **Note:** `BackupsPage` already performs a server-side Excel backup of patients,
-  appointments and medications, so there is an existing precedent for clinic-owned export —
-  but no precedent for binary attachments.
-
-### Recommendation
-
-**Option B**, on the condition the authorization matrix is settled first. The clinic already
-treats diagnosis, vitals and prescriptions as shared server data, and photographs of a
-patient's body are more sensitive still — not less. Option A would create a second, private
-copy of clinical data that the server does not know exists, which is the kind of gap that is
-cheap to avoid now and expensive to unpick later.
-
-If the clinic genuinely runs a single front-desk PC and never needs the media elsewhere,
-Option A is a legitimate, cheap choice — but it should be recorded as a deliberate
-limitation, not inherited by default.
-
-**No code has been written for either option, and `Clinic Server` is untouched.**
+This section exists so the product owner can choose between Option A and Option B with the
+costs known. It deliberately stops short of proposing authorization rules the existing system
+does not support — those are listed in §B3.2 as decisions, not requirements.
 
 ---
+
+## B1.1 Current JavaFX media behaviour
+
+All findings below are read from the DR app source. `openGallery` and its helpers occupy
+lines **1578–2083** of
+`src/main/java/org/boda/drmostafa/Admin/AdminMainBageOP/patientDashboard/patientDashboard.java`.
+
+### Where media lives
+
+`patientDashboard.java:1674-1688`:
+
+```java
+private void ensurePatientMediaFolders() {
+    String baseDir = System.getProperty("user.home") + File.separator + ".clinicapp" + File.separator + "patients";
+    patientFolder = new File(baseDir, "patient_" + patient.getId() + "_" + sanitizeFileName(patient.getName()));
+    File photosFolder = new File(patientFolder, "photos");
+    File videosFolder = new File(patientFolder, "videos");
+```
+
+So the path is
+`%USERPROFILE%\.clinicapp\patients\patient_{id}_{sanitizedName}\{photos,videos}\`.
+
+**This is a different tree from the other per-patient folders.** `createPatientFolders`
+(`:2655-2666`) uses `PathConstants.getPatientFolder` → `~/patient/{id}_{safeName}/` with
+subfolders `Prescriptions, Diagnoses, Lab_Results, Images, Videos, Reports`, a different
+sanitizer (`[^a-zA-Z0-9_\-]` → `_`, truncated to 30 chars, vs `sanitizeFileName`'s
+`[^a-zA-Z0-9\s-]` stripped entirely), and different subfolder casing. `PathConstants`
+never mentions `.clinicapp`.
+
+Two consequences that matter for any migration:
+
+- **`~/patient/{id}_{name}/Images` and `/Videos` are dead directories.**
+  `PathConstants.getPatientImagesFolder` / `getPatientVideosFolder` have **zero callers**.
+  The PDF generators write to `~/dp/prescriptions` and `~/dp/diagnoses` instead. So
+  `createPatientFolders()` creates six empty folders per patient and media lives somewhere
+  else entirely, undeclared.
+- **The media folder is keyed on a machine-local SQLite id.** `ensurePatientIsSavedLocally()`
+  (`:2644`) overwrites `patient.id` with the **local** autoincrement id from
+  `~/ClinicDatabase/Clinic.db` before the gallery runs. A DB rebuild, a restore from Excel,
+  or a lost `server_id_mappings` row re-keys the folder and orphans every file. Any migration
+  must re-key by the **server** id, not by folder name.
+
+Also note `sanitizeFileName` (`:1690-1692`) strips all non-`[a-zA-Z0-9\s-]`, so an Arabic
+patient name reduces to an empty string and the folder becomes `patient_7_`. There is no
+`null` guard (NPE risk) and no length cap.
+
+### Upload mechanics
+
+`uploadFiles` (`:1986-2038`) is reached from two toolbar buttons (`:1640-1644`) — "Upload
+Photos" and "Upload Videos". Both call the same method with a `type` string.
+
+- **Selection:** `FileChooser.showOpenMultipleDialog`, native, multi-select.
+- **Filters:** photos `*.jpg *.jpeg *.png *.gif *.bmp *.webp`; videos
+  `*.mp4 *.avi *.mov *.wmv *.mkv *.flv` — **each immediately followed by
+  `new FileChooser.ExtensionFilter("All Files", "*.*")`** (`:1993`, `:1998`). The filter is
+  the *only* type control; there is no programmatic validation afterwards, so any file —
+  including an executable — can be copied into `photos/`.
+- **Collision handling:** `_1`, `_2`, … inserted before the extension, unbounded loop
+  (`:2017-2021`). Original filename preserved verbatim.
+- **No size cap, no quota, no per-patient count limit, no disk-space check.**
+- **No content validation** — no magic-byte check, no decodability check. A file that copies
+  but cannot be decoded is reported as a success and then fails to preview.
+- **Runs on the JavaFX Application Thread** (`:2009-2029`). The class has a
+  `dashboard-async` executor at `:214-218` that this method does not use, so a multi-GB
+  video freezes the UI with no progress and no cancel.
+- **"Upload" is a misnomer.** The operation is `Files.copy(source, dest, REPLACE_EXISTING)`.
+  There is no HTTP client, no API call, no `ApiManager`. Nothing leaves the machine.
+
+### Does media ever reach Clinic Server?
+
+**No — definitively, in every code path.**
+
+- `HttpHelper` is hardcoded to JSON with a `String` body parameter
+  (`HttpHelper.java:82-97`). There is **no overload** taking `byte[]`, `File`, `Path` or
+  `InputStream`.
+- Grep for `BodyPublishers.` returns only `ofString(json)` and `noBody()` — never
+  `ofByteArray` or `ofInputStream`.
+- Grep for `multipart|MultipartFile|@RequestPart|application/octet-stream|image/jpeg|video/mp4`
+  across `src` returns **zero hits**.
+- `Base64` appears only in `ClientLicenseManager` (license obfuscation) and
+  `DeviceFingerprint`. There is no `data:image/...` or `data:video/...` anywhere.
+- No `/api/patients/{id}/media`, `/api/upload` or `/api/files` endpoint exists in any client.
+
+The complete endpoint set the app can call is JSON-only: patients, appointments, medications,
+payments, expenses, money-safe, schedule, history, notifications, SSE, health, license,
+update, auth, doctors, secretaries. The only binary download in the app is the app updater
+fetching an installer, which is not patient data.
+
+### Who can access it
+
+**There is no access control of any kind.** Not a role check, not a permission check, not an
+ownership check.
+
+- `openGallery` (`:1581`) has exactly one guard: `if (patient == null)`.
+- Grep for `role|Role|ADMIN|SECRETARY|isOwner|hasPermission|checkOwnership|currentUser`
+  **inside `patientDashboard.java` returns zero matches.**
+- `galleryBtn` appears three times — declaration, FXML, and label text. It is never disabled
+  or hidden.
+- The DR app has no client-side authorization model at all: `Login.java:356-358` hardcodes
+  `setCurrentUser("doctor", …)` and navigates straight to the dashboard.
+
+Practical consequences: two doctors sharing one Windows account have full read **and write**
+access to every patient's media with no ownership trail; a second machine sees nothing; a
+second OS account on the same PC sees nothing (its own `user.home`, its own
+`ClinicDatabase/Clinic.db`); and because the folder lives under the user's home directory it
+is exposed to home-directory backup tools, folder sync and malware. There is no
+encryption at rest, in contrast to the server's AES-256 H2 file.
+
+### Lifecycle and deletion
+
+**There is no deletion, retention, purge or expiry of media anywhere.**
+
+- The gallery toolbar has exactly three buttons — Upload Photos, Upload Videos, Open Folder
+  (`:1637-1655`). No delete. No `TreeView` context menu. No Delete key handler.
+  "Open Folder" (`Desktop.getDesktop().open`) is the only practical escape hatch.
+- **Patient deletion does not clean up media — it orphans it.** `PatientDAO.delete`
+  (`:494-518`) issues only `DELETE FROM Appointments`, `patient_history`, `Patients`. There
+  is **no filesystem call**. The folder survives with all media, permanently unreachable from
+  the UI and undeletable from within the app.
+- **Not in the Excel backup.** `ExcelBackupService` writes exactly three sheets — Patients,
+  Appointments, Medications. `LastBackupData` snapshots three JSON files.
+- **Not in server backup/restore.** `BackupRestoreService.readBackup` returns patients,
+  appointments, medications only.
+- **Not synced.** `AutoSyncService` touches SQLite rows only; no file is ever read or written.
+  Its "purge local rows for deleted patients" step purges DB rows, not the media folder.
+- **Not removed on uninstall** — nothing in `installer/`, `tools/` or any `.bat` references
+  `.clinicapp`.
+- **No per-media metadata exists.** The only metadata is the filesystem `lastModified`
+  shown in the preview pane. No capture date, no uploader, no device, no EXIF, no
+  checksum, no audit of access.
+
+### Preview
+
+Images: `ImageView` in a fixed 600×400 box, `preserveRatio`, no zoom or rotation, plus
+"Open in Viewer" via `Desktop` (`:1796-1831`). **No EXIF orientation handling**, so portrait
+phone photos display sideways. Videos: `MediaPlayer`/`MediaView` 600×350 with
+Play / Pause / Stop-to-zero and "Open in Player" (`:1832-1889`) — **no seek bar, no volume,
+no full-screen, and `MediaPlayer` is never disposed**, leaking a decoder per selection.
+The folder grid renders videos as a static `▶` glyph with **no thumbnail** (`:1943-1945`).
+
+There is no `WebView`/`WebEngine` anywhere, so no remote or streaming media, and no
+`http(s)` URL is ever passed to `Image` or `Media` — everything is a local `file:` URI.
+
+### Defects that must not be carried into a replacement
+
+| | Defect | Consequence |
+|---|---|---|
+| M1 | Folder keyed on a machine-local SQLite id | DB rebuild / Excel restore / lost mapping orphans all media |
+| M2 | Folder name embeds the patient name | Renaming a patient creates a new empty folder; the old one is orphaned |
+| M3 | `sanitizeFileName` strips non-Latin characters | Arabic names yield `patient_7_`; also no `null` guard (NPE) |
+| M4 | `mkdirs()` return values ignored | Unwritable home → empty gallery, all uploads fail, only a `log.error` |
+| M5 | "All Files (\*.\*)" filter defeats all validation | Any file type accepted; non-media files land in `photos/` and are invisible in the UI |
+| M6 | No size cap, no quota, no count limit | Unbounded disk growth |
+| M7 | Extension whitelist narrower than reality | No `.heic`/`.heif` (iPhone default), `.tiff`, `.m4v`, `.mpeg`; such files are simply not listed |
+| M8 | Copy on the FX thread, no progress, no cancel | UI freeze on large video |
+| M9 | Result dialog always styled as success | All-failed uploads still show a green "Upload Complete"; failed filenames never surfaced |
+| M10 | `MediaPlayer` never disposed | Native decoder leak; audio device can be held |
+| M11 | Non-transitive, overflow-prone comparator (`:1740-1744`) | Can throw inside a `TreeView` cell factory during sort |
+| M12 | Synchronous directory scan per cell per repaint (`:1719-1722`) | Unbounded cost as folders grow |
+| M13 | No EXIF orientation | Portrait photos display rotated |
+| M14 | No video thumbnails | Folder grid unusable for video triage |
+
+Defensively, the one thing the file handling gets **right**: the destination is built from
+`source.getName()` only (`:2011`), so a hostile source filename cannot escape the target
+directory, and the sanitized patient name cannot introduce a separator. There is no
+server-side component, so classic path traversal does not apply.
+
+---
+
+## B1.2 Server-backed (Option B) requirements
+
+Each requirement below is grounded in the Clinic Server's **verified** current state. Where the
+server has no precedent, that is stated rather than papered over.
+
+### R1 — Upload
+
+**Current state: the server has no media upload path at all.** The only `MultipartFile` usage
+in the entire codebase is `BackupRestoreController` — lines 10, 68, 105 — two ADMIN-only
+`.sql` restore/validate endpoints. There is no `@RequestPart` anywhere and no `consumes =` on
+any mapping.
+
+**Blocking constraint, verified:** there is **no** `spring.servlet.multipart.*` configuration
+anywhere in `application.properties`, `application-postgres.properties` or `pom.xml`
+(0 matches). The operative limits are therefore Spring Boot's framework defaults:
+
+- `spring.servlet.multipart.max-file-size` = **1 MB**
+- `spring.servlet.multipart.max-request-size` = **10 MB**
+
+**A single patient photo will fail at the servlet container before any controller runs.**
+Any media endpoint requires explicit multipart settings, and the existing
+`MAX_BACKUP_BYTES = 50 MB` (`BackupRestoreController:23`) is a misleading precedent — it is a
+controller-level check that can never be reached for anything above 1 MB.
+
+The validation idiom to follow already exists (`BackupRestoreController:70-85`) and is the
+correct pattern: non-empty → size cap → extension allowlist → **server-generated** filename on
+a relative path → temp delete in `finally`. The client filename is used only for the
+extension check, never for the path. The download side has a traversal guard at `:136-138`
+(`f.startsWith(dir)`) and a filename allowlist at `:152`.
+
+Requirements:
+- explicit `spring.servlet.multipart.max-file-size` / `max-request-size`, sized for video
+- streamed to disk — **never** `file.getBytes()` into memory as `:85` does; that is acceptable
+  for a 50 MB SQL file and unacceptable for video
+- server-generated storage names; client filename retained as display metadata only
+- content validation by magic bytes / decoded probe, not by extension
+- an explicit allowed-type and max-bytes policy per media kind (image vs video)
+
+### R2 — Patient association
+
+- Media binds to `patients.id`, the server-side id. The legacy folder keyed on a **local**
+  SQLite id (M1), so there is nothing to migrate *by name* — any import must resolve through
+  `server_id_mappings`.
+- **The association is where the ownership question bites.** `Patient` has no `role` field and
+  no media field. Whether media inherits `patient.createdBy`, carries its own uploader, or is
+  clinic-wide is **undecided** — see §B3.2.
+- A new `@ManyToOne` to `patients` will get **no** cascade behaviour. There is no JPA cascade
+  anywhere in the server (0 matches for `CascadeType`); `PatientService.deletePatient`
+  (`:162-177`) is a hard delete with a hand-written five-item cascade —
+  appointments, histories, payments, medications, notification preferences — plus an
+  ID-only tombstone. Media must be added to that list explicitly. The method **is**
+  transactional via the class-level `@Transactional` on `PatientService` (`:26`), so an added
+  cascade line commits atomically with the rest.
+
+### R3 — Metadata
+
+- No existing per-resource metadata convention. `AuditEvent` has nine fields
+  (`SecurityAuditLogger:72-80`) and **no resource/target identifier** — a media access event
+  would have to be smuggled into the free-text `details` string, which is not queryable or
+  joinable.
+- Minimum metadata required by the legacy behaviour: original filename, media kind, byte size,
+  and an upload timestamp. Everything else — uploader, device, capture date, EXIF, checksum —
+  does not exist today and would be new.
+- Audit persistence is best-effort and silently drops: `SecurityAuditLogger.persist` catches
+  and logs on failure without failing the request (`:54-65`).
+
+### R4 — Retrieval
+
+- Precedent for binary download is `BackupRestoreController:142` (octet-stream) with the
+  `:136-138` traversal guard.
+- **Retrieval access is the authorization question.** There is no existing read-authorization
+  helper for non-ownership data.
+- Note the SSE precedent and its stated rationale: `/api/events/**` is `authenticated()`
+  specifically because it carries PHI in the payload (`SecurityConfig`, with an inline
+  comment saying so). Media is strictly more sensitive, and the codebase has no rule for it.
+- No media field exists on any entity and `V1__initial_schema.sql` has no media table.
+
+### R5 — Authorization
+
+See §B3. In summary: the role vocabulary and the row-level mechanism both exist and are
+reusable, but **the mapping of media to a role is not derivable** from anything in the
+codebase, and the existing `checkOwnership` fails **open** for `createdBy == null`, which is
+precisely the community-booking case.
+
+### R6 — Deletion and retention
+
+- Patient deletion is a **hard delete** with a manual cascade (§R2). Media must be added to
+  that list or it is orphaned — and once the patient row is gone, **no ownership check
+  remains to protect the orphan**, while the backup dump still carries it.
+- **Do not store media bytes in the database.** `BackupRestoreService.createBackup` runs
+  `jdbcTemplate.execute("SCRIPT TO '...'")` (`:41`) over the whole H2 database with **no table
+  filtering whatsoever**. A `BLOB`/`VARBINARY` column would be inlined as a hex or base64
+  literal into plaintext `.sql` files that are already full-clinic PHI dumps on disk.
+- Backups live at `BACKUP_DIR = "backups"` **relative to the process CWD** (`:29`) with 30-day
+  retention (`:30`). Media stored outside the database would **not** be included in a backup
+  unless explicitly added, and the restore path (`RUNSCRIPT FROM`, `:154`) would not bring it
+  back.
+- **No retention policy for clinical data exists anywhere in the server.** The only retention
+  constant is the 30-day backup pruning. There is no legal or clinical retention requirement
+  encoded, so the media retention period is a product decision, not a derivable default.
+
+### R7 — Failure and partial-upload behaviour
+
+- There is no precedent for resumable, chunked or retried upload. `BackupRestoreController`
+  buffers the whole file and either succeeds or throws.
+- Required decisions with no precedent: behaviour on a mid-transfer network drop; whether a
+  partially written file is visible; whether a failed multi-file batch is all-or-nothing; and
+  whether a client-side retry can create duplicates.
+- The existing backup path is gated on maintenance mode (`BackupRestoreController:49-53`,
+  `78-82`) — a deliberate safety interlock, but not transferable to routine uploads.
+
+### R8 — Storage ownership and lifecycle
+
+- **No storage abstraction exists.** Grep for `Storage|Blob|Bucket|GridFS|S3|GCS` across
+  `src/main` returns 2 matches, both false positives (a license HMAC string and a rate-limit
+  comment). A media feature would introduce the first one, so its design is unconstrained by
+  precedent.
+- The server already writes to CWD-relative paths in six places — `logs/`, `backups/`,
+  `jwt-secret.key`, `clinic-admin.enc`, `license-warnings.json`, `clinic_server_license.json`.
+  Any media directory inherits that CWD coupling.
+- **Transport is plaintext by default.** `server.address=0.0.0.0` and
+  `server.ssl.enabled=${SSL_ENABLED:false}` (`application.properties:25`, `:45`). Uploading
+  patient imagery over cleartext HTTP to all interfaces is the single largest risk in Option
+  B, and it is a deployment property, not a code one.
+- Rate limiting is per-IP only (`RateLimitingFilter.getRateLimitKey`), so a clinic behind one
+  NAT shares a bucket, and a new media path would fall into the catch-all 300 req/min bucket.
+  The substring matcher is also fragile: any path containing `/login` silently gets the
+  20/min credential bucket.
+
+---
+
+## B1.3 Authorization matrix
+
+### B3.1 What the existing system already determines
+
+These are read from code and can be relied on:
+
+| Fact | Evidence |
+|---|---|
+| Exactly three roles: `ADMIN`, `DOCTOR`, `SECRETARY` | the only three literals in `src/main`, minted at `AdminController:139`, `DoctorController:185`, `SecretaryController:188` |
+| Role is fixed by which login endpoint was called; no elevation path | same three sites; no `role` field on `Doctor` or `Secretary` |
+| Role travels as the `role` JWT claim → `ROLE_` authority | `JwtUtil:74-82`, `JwtAuthFilter:54-61` |
+| Role is never re-read from the database | filter populates `SecurityContext` from the token only |
+| `checkOwnership(createdBy)` is the **only** row-level mechanism | `SecurityUtil.java`, 26 lines, quoted in full below |
+| `createdBy == null` → the check is a **complete no-op** | `if (createdBy == null) return null;` |
+| `createdBy == ""` → 403 for non-ADMIN | falls to the `equals` branch, which no real username matches |
+| ADMIN passes everything; the owner passes; others get 403 | the `!isAdmin()` conjunct |
+| `null` owner is **deliberate**, not a bug | `SecurityDefectFixesTest:311-324` documents that `findByCreatedByOrCreatedByIsNull` is required or community bookings vanish for SECRETARY and DOCTOR |
+| The mechanism is opt-in per call site — no interceptor, no annotation | every controller must perform the two-line `if (forbidden != null) return forbidden;` dance |
+| Path-level precedents | expenses approve/reject/unapprove = `hasRole("ADMIN")`; medications and money-safe = `hasAnyRole("ADMIN","DOCTOR")`; payments, patients, appointments, history, notifications = `authenticated()`; `DELETE /api/notifications/**` = `hasRole("ADMIN")` |
+
+The full `checkOwnership`:
+
+```java
+public static <T> ResponseEntity<T> checkOwnership(String createdBy) {
+    if (createdBy == null) {
+        return null;                                    // <-- no check at all
+    } else if (!createdBy.equals(getCurrentUsername()) && !isAdmin()) {
+        return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+    }
+    return null;
+}
+```
+
+**A defensible default matrix can be derived** from the precedents above, by analogy:
+
+| Data class | Nearest precedent | Inferred rule | Confidence |
+|---|---|---|---|
+| Clinical prescribing data | `/api/medications/**` | ADMIN + DOCTOR | High |
+| Financial records | `/api/payments/**` | any authenticated user | High |
+| Expense approval (destructive, financial) | `PUT /api/expenses/*/approve` | ADMIN only | High |
+| Patient demographics | `/api/patients/**` | any authenticated, filtered by ownership | High |
+| **Patient media** | *none* | **cannot be derived** | **None** |
+
+### B3.2 What cannot be safely inferred — product decisions required
+
+These have **no** supporting precedent in the codebase. Presenting any of them as a
+requirement would be inventing policy.
+
+| # | Undecidable question | Why it cannot be inferred |
+|---|---|---|
+| **U1** | Is patient media **clinical** (like medications → ADMIN + DOCTOR) or **administrative** (like payments → any authenticated user)? | The server has no imaging/attachment category. Photographs of a patient's body are arguably more sensitive than a medication list, but nothing in the code says so, and the two nearest precedents point opposite ways. **This single choice determines the entire matrix.** |
+| **U2** | May a **SECRETARY** view media attached to a **DOCTOR's** patient? | Patient demographics are already reachable by any authenticated user, so "no" would be a *new* restriction rather than a preserved one. Nothing states the intent either way. |
+| **U3** | Does media inherit the **patient's** ownership, or carry its own **uploader**? | If it inherits `patient.createdBy`, media on a community-booked (`createdBy == null`) patient becomes readable and writable by every authenticated user — `checkOwnership` fails open. If it carries the uploader, the "whole clinic sees this patient's file" expectation breaks. Both behaviours are defensible; they are incompatible. |
+| **U4** | Who may **delete** media? | No precedent for a destructive action on clinical content by a non-ADMIN. `DELETE /api/notifications/**` is ADMIN-only *because* that table has no owner column — media would have the same problem unless it is given an owner. |
+| **U5** | What is the **retention period**, and does deleting a patient delete their media? | No clinical-retention policy exists anywhere in the server. The only retention constant is 30-day backup pruning. |
+| **U6** | May media attach to an **appointment**, inheriting appointment visibility, or only to a patient? | The legacy gallery is patient-scoped only. There is no appointment-scoped media concept to inherit. |
+| **U7** | Is a media **tombstone** required, mirroring `DeletedPatient`? | `DeletedPatient` exists so desktop clients can purge local rows after a hard delete. A media row that disappears silently would leave clients inconsistent — but no requirement states that clients cache media at all. |
+| **U8** | Should media access be **audit-logged**, and at what granularity? | The audit schema has no resource identifier, so a media event is not queryable. `PatientController` currently emits no audit events at all. |
+
+Two further observations that are **not** decisions but must not be overlooked:
+
+- **`checkOwnership` fails open on `createdBy == null`.** Because `null` is exactly what the
+  cloud booking relay writes, reusing `checkOwnership` unchanged would make media on
+  community-booked patients world-readable and world-writable. Any reuse must handle `null`
+  deliberately, and that handling is a decision, not a default.
+- **List and single-item endpoints already disagree.** `PatientController`'s list filters are
+  `createdBy == null || own` (`:86`, `:108`, `:122`, `:141`, `:177`), but
+  `MedicationController.getByPatient` (`:51`) uses a strict `.equals` with no null allowance,
+  so the same record is visible on one endpoint and invisible on another. Any media
+  implementation that copies the inline-filter pattern will inherit this inconsistency unless
+  the filter is centralised.
+- **Pre-existing, unrelated:** `GET /api/patients/deleted-since` (`PatientController:192-203`)
+  has no ownership or role check and returns every tombstone since a client-supplied
+  timestamp. A media tombstone would have the same shape. Worth flagging, out of scope here.
+
+---
+
+## B1.4 Option A vs Option B
+
+| Dimension | Option A — local-only parity | Option B — server-backed media |
+|---|---|---|
+| Client work | Upload capability in `src-tauri/capabilities/default.json` (nothing can currently write an arbitrary path), gallery UI, image/video preview | Same, plus API client, sync/queue integration, conflict handling |
+| Server work | **None** | New endpoints, new table, storage layer (the first in the codebase), authorization rules, backup integration |
+| Cross-device visibility | **None** — a second machine sees nothing | Clinic-wide |
+| Survives reinstall / profile loss | **No** — folder lives under `user.home` | Yes, if backed up |
+| Audit trail | **None** — no uploader, no access log, no timestamp beyond `lastModified` | Available via the existing `SecurityAuditLogger`, though not queryable by resource without a schema change |
+| Deletion on patient removal | Orphans, as today | Requires adding to `PatientService.deletePatient`'s manual cascade or it orphans |
+| Backup | Excluded today | Excluded unless explicitly added; **and must not** go in the H2 dump as a BLOB |
+| Transport risk | None — never leaves the machine | **Plaintext by default**: `server.ssl.enabled=false`, `server.address=0.0.0.0` |
+| Authorization risk | None in-app; **all access governed by OS filesystem permissions only** | Depends entirely on U1–U4, which are undecided |
+| Blocking technical prerequisite | None | `spring.servlet.multipart.*` must be set — the 1 MB default rejects any photo |
+| Cost | Low | Substantially higher |
+| Fixes the inherited defects M1–M14 | Must be fixed deliberately (M1 and M5 matter most) | Naturally resolved by not keying on a local id |
+
+Neither option is a free win, and they are not symmetric:
+
+- Option A **reproduces every media defect in §B1.1** unless each is addressed on purpose. The
+  two that matter most are **M1** (folder keyed on a machine-local SQLite id, so media is
+  orphaned by a DB rebuild or an Excel restore) and **M5** (the `*.*` filter means any file
+  can be stored and non-media files are then invisible in the UI).
+- Option A's "no authorization risk" is misleading. It means *no in-app authorization at all* —
+  access is whatever the OS grants to whoever is logged into that machine.
+- Option B's largest risk is not technical but **policy**: it requires U1–U4 to be answered
+  correctly, and a wrong answer here is a PHI exposure rather than a bug.
+
+**Recommendation: Option B, conditional on U1–U4 being answered first** — because the clinic
+already treats diagnosis, vitals and prescriptions as shared server data, and patient
+photography is more sensitive than those, not less. Option A should only be chosen if the
+clinic genuinely runs a single front-desk PC and never needs the media elsewhere, and that
+should be recorded as a deliberate limitation rather than inherited by default.
+
+---
+
+## B1.5 `DECISION_REQUIRED` gate
+
+### Decisions the product owner must make
+
+| ID | Decision | Blocks |
+|---|---|---|
+| **D1** | Option A or Option B | everything |
+| **D2** | If B: is media clinical or administrative? (**U1**) | the entire authorization matrix |
+| **D3** | If B: may a SECRETARY view a DOCTOR's patient's media? (**U2**) | read rules |
+| **D4** | If B: does media inherit patient ownership or carry an uploader, and how is `createdBy == null` handled? (**U3**) | read *and* write rules; the fail-open path |
+| **D5** | If B: who may delete media? (**U4**) | delete endpoint |
+| **D6** | If B: retention period, and does patient deletion remove media? (**U5**) | lifecycle, cascade, backup |
+| **D7** | If B: patient-scoped only, or appointment-scoped too? (**U6**) | schema, authorization |
+| **D8** | If B: media tombstones for client consistency? (**U7**) | sync contract |
+| **D9** | If B: must media access be audit-logged, and can the audit schema change to carry a resource id? (**U8**) | compliance posture |
+| **D10** | If B: is TLS guaranteed before any upload is enabled? | transport risk; the server is plaintext by default |
+| **D11** | If A: which of M1–M14 are fixed deliberately, and which limitations are accepted? | client implementation |
+
+### Information still missing
+
+- **Whether any clinic data actually needs to be shared across machines today.** Every
+  decision above is cheaper if the answer is "no, one front desk".
+- **What volume and mix is expected** — image-only, or video too. This sets the size caps, the
+  storage sizing, and whether streaming or download-only is needed. Video dominates every
+  cost and risk in R1.
+- **The legal/clinical retention obligation**, if any. None is encoded in the system, and it
+  cannot be guessed.
+- **Whether the audit trail must be queryable by patient**, which determines whether D9 needs
+  a schema change rather than a free-text `details` entry.
+- **The deployment's TLS posture.** The server ships `server.ssl.enabled=false` on
+  `0.0.0.0`; Option B is not safe to enable before that is resolved.
+
+### What cannot safely start until these decisions exist
+
+1. **Any server endpoint or schema change** — the authorization rules, the association model
+   and the lifecycle all depend on D2–D9. Designing them first would mean guessing policy.
+2. **The media table or storage layout** — depends on D7 (association scope), D6 (retention)
+   and the volume answer.
+3. **Any `spring.servlet.multipart.*` change** — safe to make only alongside a decided size
+   policy, not speculatively.
+4. **Client work for Option B** — the API contract, the sync/queue behaviour and the conflict
+   semantics all follow from the server decisions.
+5. **Client work for Option A** — bounded, but D11 must be answered first so the inherited
+   defects are fixed on purpose rather than copied.
+
+**Explicitly safe to start now, if desired:** a read-only inventory of any existing
+`~/.clinicapp/patients/` media on the clinic's machines, to size D1 and answer the volume
+question. That touches no code and changes no behaviour.
 
 ## 1. DR Doctor — workflow inventory (19 FXML → 28 workflows)
 
@@ -404,7 +803,11 @@ PUT for POST, dropping the guard, and skipping the plan.
 
 ## 4c. B1 — DECISION_REQUIRED
 
-See §9. Not implemented; `Clinic Server` untouched.
+Full analysis is in the **B1 section at the top of this document**: current JavaFX media
+behaviour with file/line evidence, Option B requirements R1–R8, the authorization matrix,
+an Option A/B comparison, and the `DECISION_REQUIRED` gate (D1–D11).
+
+Not implemented; no endpoint, schema or storage change; `Clinic Server` untouched.
 
 ---
 
@@ -479,18 +882,27 @@ and Telegram-link routes.
 
 ## 8. Recommendation
 
-### `NOT_READY — B1 patient media gallery (DECISION_REQUIRED)`
+### `NOT_READY — B1 patient media (DECISION_REQUIRED)`
 
 B2 and B3 are closed. One decision stands between this and `READY_TO_RETIRE_JAVA_FX`.
 
-**Choose Option A or Option B for patient media** — both are specified in the decision note
-at the top of this document. The recommendation there is **Option B**, conditional on the
-authorization matrix being settled first, because photographs of a patient's body are more
-sensitive than the diagnosis text already on the server, and a local-only gallery creates a
-second private copy of clinical data the server does not know exists.
+**Choose Option A or Option B for patient media**, and if Option B, answer D2–D10. Both are
+specified in the **B1 section at the top of this document**, which also records the
+authorization matrix and, explicitly, the eight questions that **cannot** be derived from the
+existing system.
 
-**Option A** is a legitimate, cheap choice if the clinic genuinely runs a single front-desk PC
-— but it should be recorded as a deliberate limitation rather than inherited by default.
+Recommendation: **Option B**, conditional on U1–U4 being answered first, because the clinic
+already treats diagnosis, vitals and prescriptions as shared server data, and patient
+photography is more sensitive than those, not less. Two facts sharpen this: `checkOwnership`
+**fails open** when `createdBy == null`, which is exactly the community-booking case, so an
+unmodified reuse would make media on those patients world-readable; and the server ships
+`server.ssl.enabled=false` on `0.0.0.0`, so there is no transport protection by default.
+
+**Option A** is legitimate and cheap if the clinic genuinely runs a single front-desk PC —
+but it must be recorded as a deliberate limitation, and it inherits fourteen media defects
+unless each is fixed on purpose. The two that matter most are that the folder is keyed on a
+machine-local SQLite id (orphaning all media on a DB rebuild or Excel restore) and that the
+`*.*` file filter permits any file type while non-media files are then invisible in the UI.
 
 Nothing else blocks retirement. Every other workflow is REPLACED, and 15 of those are
 **strictly better** than the legacy implementation — most notably signed updates, live SSE
