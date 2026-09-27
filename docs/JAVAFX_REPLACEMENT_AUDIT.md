@@ -452,9 +452,9 @@ should be recorded as a deliberate limitation rather than inherited by default.
 | | Count |
 |---|---|
 | Decisions **answered** | **0 of 11** |
-| Decisions **outstanding** | **11 of 11** (D1â€“D11) |
-| Technical constraints **settled** | 6 (C1â€“C6, below) |
-| Gate | **`B1 = BLOCKED â€” DECISION_REQUIRED`** |
+| Decisions **outstanding** | **11 of 11** (D1–D11) |
+| Technical constraints **settled** | 6 (C1–C6, below) |
+| Gate | **`B1 = BLOCKED — DECISION_REQUIRED`** |
 | Overall | **`NOT_READY`** |
 
 No decision below has been answered. Nothing in this register may be treated as approved
@@ -466,17 +466,17 @@ defaulted on their behalf.
 ### B1.5.2 Settled technical constraints
 
 These are **verified facts about the current system, not choices**. They are recorded here
-because they bound every answer to D1â€“D11, and because several of them invalidate an approach
+because they bound every answer to D1–D11, and because several of them invalidate an approach
 that would otherwise look reasonable.
 
 | ID | Constraint | Evidence | Bounds |
 |---|---|---|---|
-| **C1** | **Media bytes must not be stored in the database.** A `BLOB` column would be inlined as a hex/base64 literal into the plaintext `.sql` backup dumps. | `BackupRestoreService:41` runs `SCRIPT TO` over the whole H2 database with no table filtering; `backups/` already holds full-clinic PHI dumps in plaintext | D6, D7 â€” forces filesystem/object storage |
+| **C1** | **Media bytes must not be stored in the database.** A `BLOB` column would be inlined as a hex/base64 literal into the plaintext `.sql` backup dumps. | `BackupRestoreService:41` runs `SCRIPT TO` over the whole H2 database with no table filtering; `backups/` already holds full-clinic PHI dumps in plaintext | D6, D7 — forces filesystem/object storage |
 | **C2** | **Spring's multipart defaults apply: 1 MB per file, 10 MB per request.** No `spring.servlet.multipart.*` setting exists anywhere in the project. A single photo is rejected by the container before any controller runs. | 0 matches for `multipart` / `max-file-size` / `max-request-size` across `application.properties`, `application-postgres.properties`, `pom.xml` | Any upload design; must be changed deliberately |
-| **C3** | **`MAX_BACKUP_BYTES = 50 MB` is not a valid precedent** for media upload â€” it is a controller-level check that can never be reached above the 1 MB container default. | `BackupRestoreController:23`, versus C2 | Any "reuse the backup upload pattern" argument |
-| **C4** | **`checkOwnership` fails open for `createdBy == null`.** `if (createdBy == null) return null;` â€” the check is a complete no-op. `null` is exactly what the cloud booking relay writes. | `SecurityUtil.java`, quoted in آ§B1.3; `SecurityDefectFixesTest:311-324` documents that null-inclusive queries are required or community bookings vanish | **D4** â€” this behaviour must not be reused for media without an explicit decision |
-| **C5** | **Server SSL is disabled by default and the server binds all interfaces.** No upload may be enabled over an unprotected transport. | `server.address=0.0.0.0`, `server.ssl.enabled=${SSL_ENABLED:false}` (`application.properties:25`, `:45`) | **D10** â€” a hard precondition, not a preference |
-| **C6** | **`PatientService` is class-level `@Transactional`.** Patient deletion is a hard delete with a hand-written five-item cascade. | `PatientService:26`; `deletePatient` at `:162-177` cascades appointments, histories, payments, medications, notification preferences, then writes an ID-only tombstone | **D6** â€” any media cascade line added there commits atomically; the fact must be preserved |
+| **C3** | **`MAX_BACKUP_BYTES = 50 MB` is not a valid precedent** for media upload — it is a controller-level check that can never be reached above the 1 MB container default. | `BackupRestoreController:23`, versus C2 | Any "reuse the backup upload pattern" argument |
+| **C4** | **`checkOwnership` fails open for `createdBy == null`.** `if (createdBy == null) return null;` — the check is a complete no-op. `null` is exactly what the cloud booking relay writes. | `SecurityUtil.java`, quoted in آ§B1.3; `SecurityDefectFixesTest:311-324` documents that null-inclusive queries are required or community bookings vanish | **D4** — this behaviour must not be reused for media without an explicit decision |
+| **C5** | **Server SSL is disabled by default and the server binds all interfaces.** No upload may be enabled over an unprotected transport. | `server.address=0.0.0.0`, `server.ssl.enabled=${SSL_ENABLED:false}` (`application.properties:25`, `:45`) | **D10** — a hard precondition, not a preference |
+| **C6** | **`PatientService` is class-level `@Transactional`.** Patient deletion is a hard delete with a hand-written five-item cascade. | `PatientService:26`; `deletePatient` at `:162-177` cascades appointments, histories, payments, medications, notification preferences, then writes an ID-only tombstone | **D6** — any media cascade line added there commits atomically; the fact must be preserved |
 
 ---
 
@@ -485,36 +485,36 @@ that would otherwise look reasonable.
 Every row is **UNANSWERED**. "Options" lists the choices that exist; it does not recommend
 one, and no default is implied.
 
-#### D1 â€” Storage model آ· **UNANSWERED**
+#### D1 — Storage model آ· **UNANSWERED**
 
 | Option | Meaning | Consequence if chosen |
 |---|---|---|
-| **Option A** | Local-only media, exactly as the JavaFX app behaves today | No server work. D2â€“D10 become moot. D11 applies. Media stays invisible to other machines, is lost on reinstall, and is governed only by OS filesystem permissions. |
-| **Option B** | Server-backed media | Requires D2â€“D10 before any server work can begin. |
+| **Option A** | Local-only media, exactly as the JavaFX app behaves today | No server work. D2–D10 become moot. D11 applies. Media stays invisible to other machines, is lost on reinstall, and is governed only by OS filesystem permissions. |
+| **Option B** | Server-backed media | Requires D2–D10 before any server work can begin. |
 
 **Blocks:** everything.
 
-#### D2 â€” Media classification: clinical or administrative آ· **UNANSWERED** *(Option B only)*
+#### D2 — Media classification: clinical or administrative آ· **UNANSWERED** *(Option B only)*
 
 | Option | Resulting rule (if Option B) |
 |---|---|
-| **Clinical** | `hasAnyRole("ADMIN", "DOCTOR")` â€” by analogy with `/api/medications/**` |
-| **Administrative** | `authenticated()` â€” by analogy with `/api/payments/**` |
+| **Clinical** | `hasAnyRole("ADMIN", "DOCTOR")` — by analogy with `/api/medications/**` |
+| **Administrative** | `authenticated()` — by analogy with `/api/payments/**` |
 
 **Blocks:** the entire authorization matrix. The two nearest precedents in the codebase point
 in opposite directions, and the server has no imaging/attachment category to break the tie.
-Not derivable â€” see **U1**.
+Not derivable — see **U1**.
 
-#### D3 â€” May a SECRETARY view media belonging to a doctor's patient? آ· **UNANSWERED** *(Option B only)*
+#### D3 — May a SECRETARY view media belonging to a doctor's patient? آ· **UNANSWERED** *(Option B only)*
 
 | Option | Result |
 |---|---|
 | **Yes** | Matches the existing de-facto posture: patient demographics are already reachable by any authenticated user |
 | **No** | A **new** restriction relative to current behaviour, not a preserved one |
 
-**Blocks:** read rules. Not derivable â€” see **U2**.
+**Blocks:** read rules. Not derivable — see **U2**.
 
-#### D4 â€” Ownership model آ· **UNANSWERED** *(Option B only)*
+#### D4 — Ownership model آ· **UNANSWERED** *(Option B only)*
 
 Two sub-questions, both required:
 
@@ -524,44 +524,44 @@ Two sub-questions, both required:
    Options: deny, allow, allow-read-only, or a dedicated rule.
 
 **Blocks:** read *and* write rules, and the schema. Note the two options are mutually
-exclusive in effect â€” patient-scoped makes community-booked patients' media world-readable
+exclusive in effect — patient-scoped makes community-booked patients' media world-readable
 under an unmodified `checkOwnership`; uploader-scoped breaks the expectation that the whole
-clinic sees a patient's file. Not derivable â€” see **U3**.
+clinic sees a patient's file. Not derivable — see **U3**.
 
-#### D5 â€” Who may delete media? آ· **UNANSWERED** *(Option B only)*
+#### D5 — Who may delete media? آ· **UNANSWERED** *(Option B only)*
 
 | Option | Precedent |
 |---|---|
-| **ADMIN only** | `DELETE /api/notifications/**` is ADMIN-only, justified because that table has no owner column â€” media has the same problem unless D4 gives it one |
+| **ADMIN only** | `DELETE /api/notifications/**` is ADMIN-only, justified because that table has no owner column — media has the same problem unless D4 gives it one |
 | **Uploader** | No precedent for a destructive clinical action by a non-ADMIN |
 | **Patient owner + ADMIN** | Consistent with `checkOwnership` semantics |
 
-**Blocks:** the delete path. Not derivable â€” see **U4**.
+**Blocks:** the delete path. Not derivable — see **U4**.
 
-#### D6 â€” Retention, and whether patient deletion removes media آ· **UNANSWERED** *(Option B only)*
+#### D6 — Retention, and whether patient deletion removes media آ· **UNANSWERED** *(Option B only)*
 
 Two sub-questions:
 
-1. **Retention period** â€” no clinical-retention policy exists anywhere in the server; the only
+1. **Retention period** — no clinical-retention policy exists anywhere in the server; the only
    retention constant is 30-day backup pruning. This cannot be guessed, and no legal or
    clinical requirement is encoded in the system.
-2. **Cascade** â€” does deleting a patient delete their media? Per **C6** this is a hand-written
+2. **Cascade** — does deleting a patient delete their media? Per **C6** this is a hand-written
    list; media must be added explicitly or it is orphaned, and once the patient row is gone no
    ownership check remains to protect the orphan while the backup dump still carries it.
 
 **Blocks:** lifecycle, the cascade, and backup integration. Constrained by **C1** (not in the
 database) and **C6** (transactional cascade available).
 
-#### D7 â€” Association scope آ· **UNANSWERED** *(Option B only)*
+#### D7 — Association scope آ· **UNANSWERED** *(Option B only)*
 
 | Option | Consequence |
 |---|---|
 | **Patient-scoped only** | Matches the legacy gallery exactly; simplest |
 | **Also appointment-scoped** | Media inherits appointment visibility semantics, which are a further unresolved question |
 
-**Blocks:** schema and authorization. Not derivable â€” see **U6**.
+**Blocks:** schema and authorization. Not derivable — see **U6**.
 
-#### D8 â€” Media tombstones آ· **UNANSWERED** *(Option B only)*
+#### D8 — Media tombstones آ· **UNANSWERED** *(Option B only)*
 
 `DeletedPatient` exists so desktop clients can purge local rows after a hard delete. If clients
 cache media, a silent row deletion leaves them inconsistent.
@@ -571,9 +571,9 @@ cache media, a silent row deletion leaves them inconsistent.
 | **Yes** | A tombstone table mirroring `DeletedPatient`, and a sync contract for it |
 | **No** | Clients must re-list; no purge contract needed |
 
-**Blocks:** the sync contract. Not derivable â€” see **U7**.
+**Blocks:** the sync contract. Not derivable — see **U7**.
 
-#### D9 â€” Audit logging of media access آ· **UNANSWERED** *(Option B only)*
+#### D9 — Audit logging of media access آ· **UNANSWERED** *(Option B only)*
 
 Two sub-questions:
 
@@ -588,19 +588,19 @@ Two sub-questions:
 | **Log, free-text details** | Reuses `SecurityAuditLogger` with no schema change; not queryable by patient |
 | **Log + schema change** | Adds a resource identifier; a `Clinic Server` migration, which is in scope only after this decision |
 
-**Blocks:** compliance posture. Not derivable â€” see **U8**.
+**Blocks:** compliance posture. Not derivable — see **U8**.
 
-#### D10 â€” TLS precondition آ· **UNANSWERED** *(Option B only)*
+#### D10 — TLS precondition آ· **UNANSWERED** *(Option B only)*
 
 | Option | Consequence |
 |---|---|
 | **Guaranteed before any upload is enabled** | Honours **C5**; the upload path refuses to run unless TLS is active |
-| **Deferred** | Would enable patient imagery over cleartext HTTP to `0.0.0.0` â€” contrary to **C5** |
+| **Deferred** | Would enable patient imagery over cleartext HTTP to `0.0.0.0` — contrary to **C5** |
 
 **Blocks:** whether upload may be enabled at all. **C5 already forbids the unprotected
 option**, so the realistic choice is *how* TLS is guaranteed, not *whether*.
 
-#### D11 â€” Which legacy defects are fixed vs accepted آ· **UNANSWERED** *(Option A only)*
+#### D11 — Which legacy defects are fixed vs accepted آ· **UNANSWERED** *(Option A only)*
 
 Fourteen inherited defects are listed in آ§B1.1. Each must be explicitly marked **fixed** or
 **accepted with a recorded reason**. Two are load-bearing and should not be accepted without
@@ -609,7 +609,7 @@ a deliberate decision:
 | ID | Defect | Why it matters |
 |---|---|---|
 | **M1** | Folder keyed on a machine-local SQLite id | A DB rebuild, an Excel restore or a lost `server_id_mappings` row orphans every media file |
-| **M5** | `*.*` file filter defeats the extension list | Any file type can be stored, and non-media files are then invisible in the UI â€” silent data loss from the user's view |
+| **M5** | `*.*` file filter defeats the extension list | Any file type can be stored, and non-media files are then invisible in the UI — silent data loss from the user's view |
 
 **Blocks:** client implementation for Option A.
 
@@ -618,7 +618,7 @@ a deliberate decision:
 ### B1.5.4 Exact remaining unanswered questions
 
 **Decisions:** D1, D2, D3, D4 (both sub-questions), D5, D6 (both sub-questions), D7, D8, D9
-(both sub-questions), D10, D11 â€” **11 of 11 outstanding.**
+(both sub-questions), D10, D11 — **11 of 11 outstanding.**
 
 **Information that must be supplied alongside them**, because several decisions are cheaper or
 different if it is known:
@@ -626,10 +626,10 @@ different if it is known:
 | # | Missing information | Affects |
 |---|---|---|
 | I1 | **Does any clinic data actually need to be shared across machines today?** If the answer is "no, a single front desk", Option A becomes materially more attractive. | D1 |
-| I2 | **Expected volume and media mix** â€” images only, or video as well? Video dominates every cost, size and risk in R1 and R7. | C2 sizing, D6 storage sizing, R7 |
+| I2 | **Expected volume and media mix** — images only, or video as well? Video dominates every cost, size and risk in R1 and R7. | C2 sizing, D6 storage sizing, R7 |
 | I3 | **Any legal or clinical retention obligation.** None is encoded in the system and it cannot be guessed. | D6 |
 | I4 | **Must the audit trail be queryable by patient?** Decides whether D9 needs a schema change. | D9 |
-| I5 | **The deployment's TLS posture** â€” is a reverse proxy or `SSL_ENABLED=true` planned? | D10 |
+| I5 | **The deployment's TLS posture** — is a reverse proxy or `SSL_ENABLED=true` planned? | D10 |
 | I6 | **Does the clinic want existing local media migrated**, or is it acceptable to start empty? | D1, and any future migration work |
 
 **Explicitly not to be invented:** no product owner has stated a retention period, a legal
@@ -643,29 +643,29 @@ assumed anywhere in this document.
 Once **all** applicable decisions are answered, the following become the entry conditions for
 B1 implementation. None may start before that point.
 
-**If D1 = Option A** â€” requires D11 only:
+**If D1 = Option A** — requires D11 only:
 
-1. A D11 disposition for each of M1â€“M14, with reasons for anything accepted.
-2. An explicit upload capability grant in `src-tauri/capabilities/default.json` â€” nothing
+1. A D11 disposition for each of M1–M14, with reasons for anything accepted.
+2. An explicit upload capability grant in `src-tauri/capabilities/default.json` — nothing
    currently permits writing an arbitrary path, so this is a deliberate privilege decision,
    scoped as narrowly as the feature allows.
 3. A decided local layout keyed on the **server** patient id, if M1 is to be fixed rather than
    accepted.
 4. A decided type policy and size policy, if M5/M6 are fixed.
 
-**If D1 = Option B** â€” requires D2â€“D10, plus I2â€“I6:
+**If D1 = Option B** — requires D2–D10, plus I2–I6:
 
-1. **Authorization rules derived from D2â€“D5**, written explicitly rather than inherited from
+1. **Authorization rules derived from D2–D5**, written explicitly rather than inherited from
    `checkOwnership`, honouring **C4** for the `createdBy == null` case.
 2. **A decided association model** from D7, and a storage layout that keeps bytes **out of the
    database** per **C1**.
-3. **An explicit `spring.servlet.multipart.*` policy** sized from I2, per **C2** â€” and not
+3. **An explicit `spring.servlet.multipart.*` policy** sized from I2, per **C2** — and not
    copied from `MAX_BACKUP_BYTES`, per **C3**.
 4. **A TLS precondition enforced in code**, per **C5** and D10, so upload cannot be reached
    over cleartext.
 5. **A lifecycle decision wired into `deletePatient`**, per D6 and **C6**, plus an explicit
    answer on whether media is included in the existing backup/restore flow.
-6. **A size and type policy validated by content**, not by extension â€” the legacy `*.*` filter
+6. **A size and type policy validated by content**, not by extension — the legacy `*.*` filter
    defect must not be reproduced on the server side.
 7. **A failure and partial-upload contract** (R7): mid-transfer failure, visibility of partial
    files, batch atomicity, retry idempotency. No precedent exists in the server.
@@ -680,22 +680,22 @@ not that specification.
 ### B1.5.6 Gate
 
 ```text
-B1      = BLOCKED â€” DECISION_REQUIRED
+B1      = BLOCKED — DECISION_REQUIRED
 Overall = NOT_READY
 ```
 
 **Decisions answered: 0 of 11.** No endpoint, table, entity, migration, multipart setting,
 storage layer, authorization rule, client change, or media migration has been created, and
-none may be until D1 is answered and, if Option B, D2â€“D10 are too.
+none may be until D1 is answered and, if Option B, D2–D10 are too.
 
 **Safe to start now, if desired:** a read-only inventory of any existing
 `~/.clinicapp/patients/` media on the clinic's machines, to inform I1 and I2. That touches no
 code, changes no behaviour, and commits to nothing.
 
-## B1.6 Inventory evidence â€” measured facts only
+## B1.6 Inventory evidence — measured facts only
 
 A read-only metadata inventory of the legacy patient-media locations on the development
-machine. **This section records measurements only. It answers none of D1â€“D11, and no
+machine. **This section records measurements only. It answers none of D1–D11, and no
 business requirement is inferred from it.** File contents were never opened, rendered or
 copied; only names, extensions, lengths and timestamps were read.
 
@@ -709,13 +709,13 @@ copied; only names, extensions, lengths and timestamps were read.
 | Scope | `%USERPROFILE%\.clinicapp\patients\` (the gallery tree) plus the sibling legacy trees documented in آ§B1.1, to establish whether media exists anywhere |
 
 **One measurement error was caught and corrected.** The first media scan used
-`Get-ChildItem -LiteralPath â€¦ -Include '*.jpg',â€¦`, where `-Include` is silently ignored when
+`Get-ChildItem -LiteralPath … -Include '*.jpg',…`, where `-Include` is silently ignored when
 combined with `-LiteralPath`. It reported 49 "media files" which were in fact `.txt`, `.json`,
 `.pdf` and `.xlsx`. The scan was redone with an explicit `.Extension` test; the corrected result
 is **0**. The erroneous count is recorded here rather than quietly discarded, because the
 figures below depend on it being right.
 
-### 1â€“2. Inventory target: the gallery tree
+### 1–2. Inventory target: the gallery tree
 
 | Measure | Value |
 |---|---|
@@ -734,7 +734,7 @@ The gallery tree is created lazily by `ensurePatientMediaFolders()`
 therefore **consistent with the gallery never having been opened here**. It is *not* evidence
 that patient media does not exist on the clinic's production machines.
 
-### 3â€“9. Adjacent legacy locations
+### 3–9. Adjacent legacy locations
 
 Because the primary target is absent, the sibling trees were measured to establish whether
 media exists anywhere in the legacy footprint.
@@ -754,19 +754,19 @@ media exists anywhere in the legacy footprint.
 
 **This directly confirms the آ§B1.1 finding about the dead tree.** `~/patient/` contains 17
 patient directories (`1_a`, `1_abdo`, `2_Ahmed_`, `3_Abdalrhman_Ahmed_Abdalmonem`,
-`11_abdoooo`, â€¦) and exactly 6 subdirectories each â€” `Diagnoses`, `Images`, `Lab_Results`,
-`Prescriptions`, `Reports`, `Videos` â€” for 119 directories in total. **All 102 subdirectories
+`11_abdoooo`, …) and exactly 6 subdirectories each — `Diagnoses`, `Images`, `Lab_Results`,
+`Prescriptions`, `Reports`, `Videos` — for 119 directories in total. **All 102 subdirectories
 contain zero files.** The only file in each patient directory is `Patient_Info.txt`. So
 `PathConstants.getPatientImagesFolder` / `getPatientVideosFolder` having no callers is not a
 theoretical observation: the directories exist, are created for every patient, and are empty.
 
 **Legacy activity window** (from `LastWriteTime` metadata): earliest artifact
-**2026-03-25 13:35**, latest **2026-07-18 15:31** â€” roughly four months of use, with 17
+**2026-03-25 13:35**, latest **2026-07-18 15:31** — roughly four months of use, with 17
 patients and 24 Excel backups produced.
 
 ### 10. Size distribution, image/video split, naming, duplicates
 
-**Not measurable â€” there are no media files.** Every distribution statistic (smallest,
+**Not measurable — there are no media files.** Every distribution statistic (smallest,
 largest, median, percentiles), the image-versus-video count and byte split, the count of
 empty patient media directories, the count of unparseable `patient_{id}_{name}` directories,
 and the duplicate-filename count are all **undefined at 0 files**. No value is estimated or
@@ -777,25 +777,127 @@ extrapolated. (For completeness: the 17 `~/patient` directories do all parse aga
 
 | Question | Informed? | Basis |
 |---|---|---|
-| **I1** â€” does existing media require cross-machine sharing? | **No** | There is no media to share. The filesystem cannot indicate a sharing requirement, and none is inferred. |
-| **I2** â€” expected volume and image/video mix | **No** | Zero files means no measured mix. The clinic's real mix is unknown and must be supplied. |
-| **I6** â€” should existing media be migrated? | **No** | Nothing exists here to migrate. Whether the clinic's machines hold media is still unanswered; this machine is a development machine. |
+| **I1** — does existing media require cross-machine sharing? | **No** | There is no media to share. The filesystem cannot indicate a sharing requirement, and none is inferred. |
+| **I2** — expected volume and image/video mix | **No** | Zero files means no measured mix. The clinic's real mix is unknown and must be supplied. |
+| **I6** — should existing media be migrated? | **No** | Nothing exists here to migrate. Whether the clinic's machines hold media is still unanswered; this machine is a development machine. |
 
 **One measured fact is worth carrying forward**, stated without inference: on this machine
-the legacy application's *other* patient features were exercised â€” 17 patients, report PDFs,
-24 Excel backups over four months â€” while **the media gallery was never opened even once**.
+the legacy application's *other* patient features were exercised — 17 patients, report PDFs,
+24 Excel backups over four months — while **the media gallery was never opened even once**.
 That is a fact about this machine only. It does not establish that the clinic does not use the
 gallery, and it must not be read as evidence that media is unnecessary.
 
 ### Gate unchanged
 
 ```text
-B1      = BLOCKED â€” DECISION_REQUIRED
+B1      = BLOCKED — DECISION_REQUIRED
 Overall = NOT_READY
 ```
 
 **Decisions answered: 0 of 11.** The read-only inventory that was identified as safe to run
-has now been run; it produced no measurement that bears on D1â€“D11.
+has now been run; it produced no measurement that bears on D1–D11.
+
+## B1.7 Investigation closure
+
+The B1 technical investigation is **closed**. This section records what was examined, what the
+evidence can and cannot establish, and what remains outstanding. It states no decision and
+answers none of D1–D11.
+
+### What is complete
+
+| | Investigation | Extent | Recorded in |
+|---|---|---|---|
+| 1 | **Repository / code investigation** | Complete. JavaFX media behaviour traced to file and line (`patientDashboard.java:1578-2083`, `HttpHelper.java:82-97`, `PathConstants`, `ExcelBackupService`, `BackupRestoreService`, `AutoSyncService`). Clinic Server read for its existing authorization model (`SecurityUtil`, `SecurityConfig`, `JwtAuthFilter`, `SecurityAuditLogger`, `BackupRestoreController`, `PatientService`) and its storage, backup, deletion and transport posture. | آ§B1.1, آ§B1.2, آ§B1.3 |
+| 2 | **Read-only filesystem inventory** | Complete. Directory listings and file metadata only; no media file opened, rendered or copied. | آ§B1.6 |
+
+### Further evidence cannot resolve the outstanding decisions
+
+**No further repository investigation and no further local-filesystem inspection can answer the
+outstanding B1 questions.** They are not questions of fact about the code or the disk. They are
+product, clinical and operational judgements that only the clinic can make:
+
+- Whether patient media must be shared across machines (**I1**)
+- The production media volume and image/video mix (**I2**)
+- Any legal or clinical retention obligation (**I3**)
+- Whether the audit trail must be queryable by patient (**I4**)
+- The deployment's TLS posture (**I5**)
+- Whether existing production media must be migrated (**I6**)
+
+Inspecting more code would only re-state the same verified constraints. Inspecting more disks
+would only re-state the same absence. **The remaining input is a decision, not evidence.**
+
+### What the local inventory does not establish
+
+The inventory found **zero patient media on this machine**: the gallery tree
+`%USERPROFILE%\.clinicapp\patients\` does not exist, and there are no image or video files in
+any legacy location. Therefore the inventory establishes **nothing** about:
+
+- **Whether cross-machine sharing is required.** There is no media here to share, and a
+  filesystem cannot express a sharing requirement.
+- **Expected production media volume or image/video mix.** Zero files means no measured mix.
+  The production mix is unknown.
+- **Whether existing production media must be migrated.** Nothing exists here to migrate. This
+  is a development machine; the clinic's machines were not examined and their state is unknown.
+
+The one related observation is a fact about **this machine only**: the legacy application's
+other patient features were exercised over roughly four months — 17 patients, report PDFs and
+24 Excel backups — while the media gallery was never opened. **That is not evidence that the
+clinic does not need patient media**, and it is not used as such anywhere in this document.
+
+### Absence of evidence is not a requirement
+
+**No authorization, retention, ownership, audit, TLS or clinical-classification requirement is
+inferred from the absence of media.** Specifically, the zero-file result does **not** imply:
+
+- that media is unnecessary, low-volume, or optional;
+- that any role may or may not upload, view or delete it;
+- that no retention period applies, or that any period is acceptable;
+- that patient-scoped, uploader-scoped or clinic-wide ownership is sufficient;
+- that access need not be audit-logged, or that free-text logging suffices;
+- that TLS is unnecessary, or that the transport constraint in **C5** may be relaxed;
+- that media is administrative rather than clinical (**D2**).
+
+Each of D1–D11 remains exactly as open as it was. The six settled constraints **C1–C6** remain
+settled, and the missing operational information **I2–I6** remains missing. The distinction
+between the three is preserved deliberately:
+
+| Layer | State | Meaning |
+|---|---|---|
+| **C1–C6** | **Settled** | Verified facts about the current system. They bound any answer; they are not themselves choices. |
+| **D1–D11** | **Unanswered — 0 of 11** | Product, clinical and operational decisions. No value assumed, inferred or defaulted. |
+| **I2–I6** | **Missing** | Operational information that must be supplied alongside the decisions. Cannot be derived from code or disk. |
+
+### Entry condition for implementation
+
+**Implementation may begin only after the required decisions and operational information are
+supplied by the product owner and converted into an approved B1 specification.**
+
+That specification must state, at minimum:
+
+- **D1** — the chosen storage model; and if Option B, **D2** classification, **D3** secretary
+  read access, **D4** ownership including the `createdBy == null` case, **D5** delete rights,
+  **D6** retention and cascade, **D7** association scope, **D8** tombstones, **D9** audit
+  approach, **D10** TLS enforcement; if Option A, **D11** a disposition for each of M1–M14.
+- **I2** volume and media mix, **I3** any retention obligation, **I4** audit queryability,
+  **I5** TLS posture, **I6** migration intent.
+- How the specification honours **C1–C6**; in particular **C4** (no reuse of the
+  fail-open `checkOwnership` behaviour without an explicit rule) and **C5** (no upload over an
+  unprotected transport).
+
+Until that approved specification exists, no endpoint, table, entity, migration, multipart
+setting, storage layer, authorization rule, client change or media migration may be created.
+This document and the decision register in آ§B1.5 record what must be decided; **they are not
+that specification.**
+
+### Final status
+
+```text
+B1      = BLOCKED — DECISION_REQUIRED
+Overall = NOT_READY
+```
+
+**Decisions answered: 0 of 11.** Technical investigation is exhausted; what remains is a
+decision that only the clinic can make.
 
 ## 1. DR Doctor — workflow inventory (19 FXML → 28 workflows)
 
