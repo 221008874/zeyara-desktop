@@ -1,14 +1,7 @@
-import React from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
-import { useAuthStore, type Role } from '../stores/auth';
-import { rolesFor } from '../app-shell/navigation';
-import { useLicenseStore } from '../stores/license';
+import { ProtectedRoute, RoleGuard, Guarded, LicenseGate, SetupGate } from '../app-shell/accessControl';
 import { LoginPage } from '../pages/LoginPage';
-import { LicenseScreen } from '../pages/LicenseScreen';
-import { SetupWizardPage } from '../pages/SetupWizardPage';
-import { ChangePasswordPage } from '../pages/ChangePasswordPage';
 import { AppShell } from '../app-shell/AppShell';
-import { useSetupStore } from '../stores/setup';
 import { DashboardPage } from '../pages/DashboardPage';
 import { PatientsPage } from '../pages/PatientsPage';
 import { PatientDashboardPage } from '../pages/PatientDashboardPage';
@@ -32,76 +25,6 @@ import { BackupsPage } from '../pages/BackupsPage';
 import { InfraPage } from '../pages/InfraPage';
 import { ClinicProfilePage } from '../pages/ClinicProfilePage';
 import { ServerManagerPage } from '../pages/ServerManagerPage';
-
-function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { session, isLoading } = useAuthStore();
-  if (isLoading) return <div>Loading...</div>;
-  if (!session) return <Navigate to="/login" replace />;
-  if (session.mustChangePassword) return <ChangePasswordPage />;
-  return <>{children}</>;
-}
-
-function RoleGuard({ roles, children }: { roles: Role[]; children: React.ReactNode }) {
-  const { session } = useAuthStore();
-  // Fail closed. The previous `session?.role && ...` fell through and rendered the
-  // children when the role was missing, so a session without a role saw every screen.
-  if (!session?.role || !roles.includes(session.role)) {
-    return <Navigate to="/dashboard" replace />;
-  }
-  return <>{children}</>;
-}
-
-/**
- * Applies the role list that `app-shell/navigation.ts` declares for a path, so the
- * router and the sidebar read one source instead of two that can drift.
- */
-function Guarded({ path, children }: { path: string; children: React.ReactNode }) {
-  return <RoleGuard roles={rolesFor(path)}>{children}</RoleGuard>;
-}
-
-function LicenseGate({ children }: { children: React.ReactNode }) {
-  const { status, isLoading, check } = useLicenseStore();
-  const [checking, setChecking] = React.useState(true);
-
-  React.useEffect(() => {
-    const run = async () => {
-      await check();
-      setChecking(false);
-    };
-    run();
-  }, [check]);
-
-  if (checking || isLoading) return <div>Loading...</div>;
-  if (!status?.activated) return <LicenseScreen />;
-  return <>{children}</>;
-}
-
-/**
- * Shows the first-use registration wizard when the server has no users yet.
- * Once setup is complete (or users already exist) it renders the protected app.
- */
-function SetupGate({ children }: { children: React.ReactNode }) {
-  const { firstUseComplete, isChecking, checkFirstUse } = useSetupStore();
-  const [checking, setChecking] = React.useState(true);
-
-  React.useEffect(() => {
-    const run = async () => {
-      if (!firstUseComplete) {
-        const firstUse = await checkFirstUse();
-        if (firstUse) {
-          setChecking(false);
-          return;
-        }
-      }
-      setChecking(false);
-    };
-    run();
-  }, [checkFirstUse, firstUseComplete]);
-
-  if (checking || isChecking) return <div>Loading...</div>;
-  if (!firstUseComplete) return <SetupWizardPage />;
-  return <>{children}</>;
-}
 
 export function AppRoutes() {
   return (

@@ -36,7 +36,12 @@ check: async () => {
             daysUntilExpiry = expiryRes.data?.daysUntilExpiry ?? null;
           } catch { /* expiry-info may require auth; optional display */ }
           const status: LicenseStatus = {
-            activated: !data.locked,
+            // Only an explicit `locked: false` activates. This was `!data.locked`, which
+            // reads as `true` when the field is absent - so a malformed or proxied
+            // response unlocked the whole application while `locked` was separately
+            // defaulted to true, and LicenseGate reads `activated`. Fails closed, like
+            // every other gate in the client.
+            activated: data.locked === false,
             locked: data.locked ?? true,
             reason: data.reason ?? null,
             expiryDate,
