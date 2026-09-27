@@ -1072,11 +1072,28 @@ decision from the retention period.
 
 **Stakeholder answer, part 1:**
 
-> _______________________________________________
+> **C — Retention is determined by the clinic's policy and applicable legal/clinical obligations.**
+
+> _Recorded verbatim. No retention period is specified by this answer. The period itself is a
+> separate input that has not been supplied, and none is inferred here. Note that the part 1
+> prompt field offered a period or "indefinite"; this answer selects neither, so that field
+> remains an open input rather than an answered value._
 
 **Stakeholder answer, part 2:**
 
-> _______________________________________________
+> **C — Patient deletion is a soft-delete; the Patient record and its associated Media are
+> retained rather than physically deleted.**
+
+> _Recorded verbatim. The soft-delete mechanism is deliberately not defined here. This is a
+> stakeholder decision, not an implementation instruction._
+
+> _Two factual notes, neither of which decides anything:_
+> _- Accessibility of media after a soft delete is **not** determined by this answer. It must
+>   follow the authorization rules as answered in D2, D3 and D4.2, and those answers are not
+>   altered by D6.2. Nothing here grants or implies continued access._
+> _- The Clinic Server currently performs a **hard** delete of the patient row with an ID-only
+>   tombstone (see §B1.2 R6 and **C6**), so a soft delete is a change from existing behaviour
+>   rather than a description of it. No mechanism is proposed here._
 
 ---
 
