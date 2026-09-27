@@ -258,8 +258,53 @@ Zeyara Desktop
 └── required Tauri/native dependencies
 ```
 
-Measured: **5.33 MB** NSIS installer, no `java.exe`, no server JAR. The client is built
+Measured: **6.70 MB** NSIS installer, no `java.exe`, no server JAR. The client is built
 and installed with no Java and no Clinic Server present on the machine.
+
+#### The installable-and-startable check
+
+1.0.0 and 1.0.1 signed, verified, and installed cleanly — and could not start. The app died
+at `STATUS_DLL_NOT_FOUND` (`0xC0000135`) before drawing a window, because `webview2-com`
+links `WebView2Loader.dll` **dynamically** and the NSIS bundle shipped only the main
+binary. Every check up to that point had passed, because a signed installer that cannot
+launch still signs and still verifies. Only installing it and starting it exposed the
+problem.
+
+`bundle.resources` now ships the DLL, and `scripts/verify-bundle-imports.mjs` parses the
+built executable's PE import table and fails if anything genuinely imported will not
+resolve. `api-ms-win-*` and `ext-ms-win-*` are skipped: they are OS API set forwarders with
+no file on disk, and checking them as paths produces a dozen phantom failures.
+
+| Release | Installs | Starts | Note |
+|---|---|---|---|
+| 1.0.0 | yes | **no** | `WebView2Loader.dll` missing. Demoted to prerelease. |
+| 1.0.1 | yes | **no** | Same defect. Demoted to prerelease. |
+| 1.0.2 | yes | yes | Verified from a clean install: window titled, responsive, 24 threads. |
+
+Run the guard before any release:
+
+```sh
+node scripts/verify-bundle-imports.mjs src-tauri/target/release/zeyara-desktop.exe
+```
+
+### Update channel
+
+`https://github.com/221008874/zeyara-desktop/releases/latest/download/latest.json`, served
+from the **public** repository: GitHub returns 404 for release assets to unauthenticated
+clients, so a private repo cannot serve updates. The repository is public by decision, which
+also means the client source is public.
+
+Verified against the live endpoint without credentials: the manifest is readable, names an
+immutable HTTPS artifact for its own tag, and the downloaded bytes pass minisign
+verification while a single flipped byte is rejected. An update is offered from an older
+version, not re-offered after applying, and never offered as a downgrade.
+
+The in-app cycle — detect, download, install, restart, confirm the new version — has **not**
+been run end to end. `checkForUpdate()` fires on the dashboard, which needs a configured
+server and a login, and the user chose to publish and verify what is verifiable rather than
+automate the UI. So AC13 is **PARTIAL**: the supply chain is verified, the installer is
+verified to start, and the final interactive hop is outstanding.
+
 
 ### Connection model
 
