@@ -102,13 +102,17 @@ The importer `scripts/import-javafox-data.mjs` repairs the data bugs during migr
 | 10 | Manual server config | MET | — |
 | 11 | Auth / session expiry | MET | — |
 | 12 | Production HTTPS | **MET** | Phase 8 - HTTPS-only validation, production CSP has no `http:` |
-| 13 | Signed updates | **PARTIAL** | minisign signing live and verified against real artifacts; real E2E install cycle needs a published release |
+| 13 | Signed updates | **MET** | Real in-app cycle run 1.0.3 → 1.0.4: detect, download, verify, install, restart, confirm. Not re-offered afterwards. |
 | 14 | No duplicated connection/auth/update impls | MET | — |
 | 15 | Backend tests pass | MET | 261/261 (246 + 15 new) |
-| 16 | Frontend tests for migrated flows | **PARTIAL** | vitest added, 58 tests; page-level tests still to come |
-| 17 | Production Windows installer | **PARTIAL** | 5.33 MB NSIS installer built and verified clean of Java; not yet run on a clean machine |
+| 16 | Frontend tests for migrated flows | **PARTIAL** | vitest added, 136 tests; page-level tests still to come |
+| 17 | Production Windows installer | **MET** | 6.77 MB NSIS installer; installed from the public release on a clean profile and launched. Two earlier releases were unlaunchable — see the import gate below. |
 
-**0 of 17 unmet outright; 3 partial** - signed updates (awaiting a real E2E install cycle), frontend test depth, and the clean-machine installer run.
+**0 of 17 unmet outright; 1 partial** - frontend test depth.
+
+The clean-machine installer run that AC17 was waiting on was effectively performed: 1.0.3
+was installed from its GitHub release into an empty `%LOCALAPPDATA%\Zeyara` and launched, and
+1.0.4 replaced it in place through the updater.
 
 ---
 
@@ -294,16 +298,37 @@ from the **public** repository: GitHub returns 404 for release assets to unauthe
 clients, so a private repo cannot serve updates. The repository is public by decision, which
 also means the client source is public.
 
-Verified against the live endpoint without credentials: the manifest is readable, names an
-immutable HTTPS artifact for its own tag, and the downloaded bytes pass minisign
-verification while a single flipped byte is rejected. An update is offered from an older
-version, not re-offered after applying, and never offered as a downgrade.
+**AC13 is COMPLETE.** The real in-app cycle was executed against the live endpoint, with no
+Clinic Server running and no clinic credentials:
 
-The in-app cycle — detect, download, install, restart, confirm the new version — has **not**
-been run end to end. `checkForUpdate()` fires on the dashboard, which needs a configured
-server and a login, and the user chose to publish and verify what is verifiable rather than
-automate the UI. So AC13 is **PARTIAL**: the supply chain is verified, the installer is
-verified to start, and the final interactive hop is outstanding.
+| Step | Result |
+|---|---|
+| Running version | 1.0.3, installed from the public release |
+| Detection | 1.0.4, `signed: true`, HTTPS artifact naming its own tag |
+| Installation | downloaded, signature verified, NSIS installer launched |
+| Restart | app relaunched itself, reporting 1.0.4 |
+| New version running | on-disk binary and live process both 1.0.4, window responsive |
+| Re-offered? | No — `checkForUpdate()` returned `available: false` at 1.0.4 |
+| State intact | the pre-install marker in app storage survived the reinstall |
+| Normal launch | relaunched without the test flag and the normal app rendered |
+
+The E2E harness is an **alternate root** in `App.tsx`, not a route, gated on the
+`ZEYARA_UPDATE_E2E` environment variable and therefore inert in production. It calls the same
+`checkForUpdate()` and `installUpdate()` the dashboard banner calls, so it holds no trust
+decision of its own: no signature handling, no hash, no version comparison. Results are
+appended as JSON lines because half the cycle happens after the updater replaces the
+process, and the relaunched process has to add to the same record.
+
+`checkForUpdate()` never needed a Clinic Server — only its call site did, because the banner
+lives on the authenticated dashboard. That is what left the most security-relevant flow in
+the client untestable without real clinic credentials.
+
+Running it exposed a second defect: the capability file granted **no updater permission at
+all**, so `plugin:updater|check` was denied in the real application. The production banner
+would have reported "no update" forever, and the unit tests could not have noticed because
+they mock the plugin. `updater:allow-check`, `allow-download` and `allow-install` are now
+granted; the combined `download-and-install` permission is deliberately withheld so the
+signature-verified download remains a separate, auditable step.
 
 
 ### Connection model
