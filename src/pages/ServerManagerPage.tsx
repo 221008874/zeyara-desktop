@@ -86,11 +86,17 @@ export const ServerManagerPage: React.FC = () => {
   const handleApply = () => {
     const h = host.trim();
     const p = port.trim();
-    if (!h || !Number.isInteger(Number(p))) {
-      setProbe({ ok: false, text: 'أدخل عنواناً ورقماً منفذ صالحين.' });
+    if (!h) {
+      setProbe({ ok: false, text: 'أدخل عنوان الخادم.' });
       return;
     }
-    setServerBaseUrl(h, p);
+    const applied = setServerBaseUrl(h, p);
+    if (!applied.ok) {
+      // The address was rejected, so nothing was changed and the current server is
+      // still in use. Say why rather than failing later with a connection error.
+      setProbe({ ok: false, text: applied.message });
+      return;
+    }
     setServerConfig(h, p);
     setProbe(null);
     void load();
@@ -156,10 +162,23 @@ export const ServerManagerPage: React.FC = () => {
         <Typography variant="subtitle1" sx={{ mb: 1, fontWeight: 700 }}>عنوان الخادم</Typography>
         <Typography variant="body2" sx={{ color: 'text.secondary', mb: 2 }}>
           عنوان خادم العيادة داخل الشبكة. يتم اكتشافه تلقائياً، ويمكن تعديله هنا في أي وقت.
+          يجب أن يبدأ بـ https:// — ضع الخادم خلف وكيل يدعم TLS.
         </Typography>
         <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ mb: 2 }}>
-          <TextField label="العنوان" value={host} onChange={(e) => setHost(e.target.value)} fullWidth />
-          <TextField label="المنفذ" value={port} onChange={(e) => setPort(e.target.value)} fullWidth sx={{ maxWidth: 160 }} />
+          <TextField
+            label="العنوان"
+            value={host}
+            onChange={(e) => setHost(e.target.value)}
+            fullWidth
+            placeholder="https://192.168.1.8:8443"
+          />
+          <TextField
+            label="المنفذ (تطوير)"
+            value={port}
+            onChange={(e) => setPort(e.target.value)}
+            fullWidth
+            sx={{ maxWidth: 180 }}
+          />
         </Stack>
         <Stack direction="row" spacing={1}>
           <Button variant="outlined" onClick={handleProbe} disabled={probing}>

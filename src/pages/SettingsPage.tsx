@@ -59,20 +59,33 @@ export const SettingsPage: React.FC = () => {
   const handleTestConnection = async () => {
     const h = host.trim();
     const p = port.trim();
-    const portNum = Number(p);
-    if (!h || !Number.isInteger(portNum) || portNum < 1 || portNum > 65535) {
-      setTestResult({ ok: false, text: 'أدخل عنواناً ومنفذاً صالحين (1-65535).' });
+    // A full origin carries its own port; the separate box only applies to a bare host,
+    // which in practice means loopback during development.
+    const isFullOrigin = /^https?:\/\//i.test(h);
+    if (!h) {
+      setTestResult({ ok: false, text: 'أدخل عنوان الخادم.' });
       return;
+    }
+    if (!isFullOrigin) {
+      const portNum = Number(p);
+      if (!p || !Number.isInteger(portNum) || portNum < 1 || portNum > 65535) {
+        setTestResult({ ok: false, text: 'أدخل عنواناً ومنفذاً صالحين (1-65535).' });
+        return;
+      }
     }
     setTesting(true);
     setTestResult(null);
     try {
       const probe = await probeServer(h, p);
       if (probe.ok) {
-        setServerBaseUrl(h, p);
+        const applied = setServerBaseUrl(h, p);
+        if (!applied.ok) {
+          setTestResult({ ok: false, text: applied.message });
+          return;
+        }
         setServerConfig(h, p);
         refreshNotificationBus();
-        setTestResult({ ok: true, text: `تم الاتصال بالخادم ${h}:${p} وتطبيقه.` });
+        setTestResult({ ok: true, text: `تم الاتصال بالخادم وتطبيقه (${getBaseUrl()}).` });
       } else {
         setTestResult({ ok: false, text: 'فشل الاتصال: ' + probe.message });
       }
@@ -82,12 +95,15 @@ export const SettingsPage: React.FC = () => {
   };
 
   const handleResetServer = () => {
+    // Clears the configured address entirely rather than restoring a localhost default:
+    // there is no same-machine server to fall back on, and a localhost default would
+    // read as "already configured" while silently failing.
     resetServerBaseUrl();
-    setServerConfig('localhost', '8081');
-    setHost('localhost');
+    setServerConfig('', '8081');
+    setHost('');
     setPort('8081');
     refreshNotificationBus();
-    setTestResult({ ok: true, text: 'تمت استعادة الخادم الافتراضي (localhost:8081).' });
+    setTestResult({ ok: true, text: 'تم مسح عنوان الخادم. سيعمل الاكتشاف التلقائي.' });
   };
 
   return (
@@ -109,8 +125,8 @@ export const SettingsPage: React.FC = () => {
         <Typography variant="caption" sx={{ display: 'block', mb: 2, color: '#6B7280' }}>
           الخادم الحالي: {getBaseUrl() || '(غير محدد — يُكتشف تلقائياً أو يُضبط يدوياً)'}
         </Typography>
-        <TextField label="عنوان الخادم" value={host} onChange={(e) => setHost(e.target.value)} fullWidth size="small" sx={{ mb: 1 }} helperText="اتركه فارغاً للاكتشاف التلقائي. يمكنك لصق عنوان كامل مثل https://clinic.example.com" />
-        <TextField label="المنفذ" value={port} onChange={(e) => setPort(e.target.value)} fullWidth size="small" sx={{ mb: 2 }} />
+        <TextField label="عنوان الخادم" value={host} onChange={(e) => setHost(e.target.value)} fullWidth size="small" sx={{ mb: 1 }} placeholder="https://192.168.1.8:8443" helperText="اتركه فارغاً للاكتشاف التلقائي. يجب أن يبدأ بـ https://" />
+        <TextField label="المنفذ (للتطوير المحلي فقط)" value={port} onChange={(e) => setPort(e.target.value)} fullWidth size="small" sx={{ mb: 2 }} helperText="يُستخدم فقط مع localhost أثناء التطوير" />
         <Box sx={{ display: 'flex', gap: 1 }}>
           <Button variant="outlined" onClick={handleTestConnection} disabled={testing}>
             {testing ? 'جاري الاختبار...' : 'اختبار الاتصال وتطبيقه'}

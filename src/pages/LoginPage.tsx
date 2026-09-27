@@ -39,12 +39,16 @@ export const LoginPage: React.FC = () => {
     return <Navigate to="/dashboard" replace />;
   }
 
-  const applyServer = (host: string, port: string) => {
-    setServerBaseUrl(host, port);
+  // Returns the validation message so a rejected address surfaces as an error rather than
+  // silently leaving the app pointed at whatever it was using before.
+  const applyServer = (host: string, port: string): string | null => {
+    const result = setServerBaseUrl(host, port);
+    if (!result.ok) return result.message;
     settings.setServerConfig(host, port);
     import('../lib/notificationBus')
       .then((m) => m.notificationBus.refresh())
       .catch(() => {});
+    return null;
   };
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -52,8 +56,16 @@ export const LoginPage: React.FC = () => {
     setError(null);
     setLoading(true);
     try {
-      // Use the server the user has configured, even without clicking test first.
-      applyServer(serverHost.trim() || 'localhost', serverPort.trim() || '8081');
+      // Use the server the user has configured, even without clicking test first. An
+      // empty host is legitimate: the app then relies on LAN discovery.
+      const host = serverHost.trim();
+      if (host) {
+        const problem = applyServer(host, serverPort.trim());
+        if (problem) {
+          setError(problem);
+          return;
+        }
+      }
       if (typeof window !== 'undefined') window.localStorage.setItem('zeyara_last_role', role);
       const { mustChangePassword } = await login(username, password, role);
       if (mustChangePassword) {
@@ -73,14 +85,27 @@ export const LoginPage: React.FC = () => {
     setServerSuccess(null);
     const host = serverHost.trim();
     const port = serverPort.trim();
-    const portNum = Number(port);
-    if (!host || !Number.isInteger(portNum) || portNum < 1 || portNum > 65535) {
-      setServerError('أدخل عنواناً ومنفذاً صالحين (1-65535).');
+    // A full origin carries its own scheme and port; the separate port box only applies
+    // to a bare host, which in practice means loopback during development.
+    const isFullOrigin = /^https?:\/\//i.test(host);
+    if (!host) {
+      setServerError('أدخل عنوان الخادم، أو اتركه فارغاً للاكتشاف التلقائي.');
       return;
+    }
+    if (!isFullOrigin) {
+      const portNum = Number(port);
+      if (!port || !Number.isInteger(portNum) || portNum < 1 || portNum > 65535) {
+        setServerError('أدخل عنواناً ومنفذاً صالحين (1-65535).');
+        return;
+      }
     }
     const probe = await probeServer(host, port);
     if (probe.ok) {
-      applyServer(host, port);
+      const problem = applyServer(host, port);
+      if (problem) {
+        setServerError(problem);
+        return;
+      }
       setServerSuccess(`تم الاتصال بالخادم ${host}:${port} وتطبيقه.`);
     } else {
       setServerError('لا يمكن الوصول إلى الخادم: ' + probe.message);
@@ -172,14 +197,17 @@ export const LoginPage: React.FC = () => {
               fullWidth
               size="small"
               sx={{ mb: 1 }}
+              placeholder="https://192.168.1.8:8443"
+              helperText="اتركه فارغاً للاكتشاف التلقائي. يجب أن يبدأ بـ https://"
             />
             <TextField
-              label="المنفذ"
+              label="المنفذ (للتطوير المحلي فقط)"
               value={serverPort}
               onChange={(e) => setServerPort(e.target.value)}
               fullWidth
               size="small"
               sx={{ mb: 1 }}
+              helperText="يُستخدم فقط مع localhost أثناء التطوير"
             />
             <Button variant="outlined" fullWidth size="small" onClick={handleTestServer}>
               اختبار الاتصال وتطبيقه

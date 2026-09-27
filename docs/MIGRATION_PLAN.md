@@ -101,14 +101,14 @@ The importer `scripts/import-javafox-data.mjs` repairs the data bugs during migr
 | 9 | Discovery works securely | **MET** | Phase 7 done: strict HMAC, no TOFU, explicit ADMIN approval |
 | 10 | Manual server config | MET | — |
 | 11 | Auth / session expiry | MET | — |
-| 12 | Production HTTPS | **UNMET** | Phase 8 - CSP still allows http: |
+| 12 | Production HTTPS | **MET** | Phase 8 - HTTPS-only validation, production CSP has no `http:` |
 | 13 | Signed updates | **UNMET** | Phase 9 - no signing key yet |
 | 14 | No duplicated connection/auth/update impls | MET | — |
 | 15 | Backend tests pass | MET | 261/261 (246 + 15 new) |
 | 16 | Frontend tests for migrated flows | **PARTIAL** | vitest added, 58 tests; page-level tests still to come |
 | 17 | Production Windows installer | **PARTIAL** | 5.33 MB NSIS installer built and verified clean of Java; not yet run on a clean machine |
 
-**2 of 17 unmet (HTTPS, signed updates), 2 partial (frontend test depth, clean-machine
+**1 of 17 unmet (signed updates), 2 partial (frontend test depth, clean-machine
 installer run).** All of them are client-side work; none requires a backend change.
 
 ---
@@ -181,6 +181,40 @@ Each phase keeps the project buildable.
 Phase 10 removal of the JavaFX deployment path happens only after parity verification.
 The old repositories stay until then.
 
+### Transport policy (AC 12)
+
+| | Production build | Development build |
+|---|---|---|
+| Server address | `https://host[:port]` only | `https://` any host, plus `http://` **loopback only** |
+| Bare `host` / `host:port` | rejected, scheme must be explicit | rejected, scheme must be explicit |
+| `http://` non-loopback | rejected | rejected |
+| `http://` loopback | rejected | allowed |
+| CSP `connect-src` | `'self' https: wss:` | adds `http://localhost:* http://127.0.0.1:* ws://localhost:*` |
+| Update artifact URL | `https://` only | `https://`, or loopback `http://` |
+
+`http://` is **never** silently upgraded to `https://`. A silent upgrade turns a
+configuration mistake into a certificate error that looks like a server fault, so every
+rejection returns a specific Arabic reason: missing scheme, malformed, disallowed
+protocol, insecure transport, not-an-origin, or credentials-in-url.
+
+A discovered server faces the identical policy. Discovery may identify a host on the LAN,
+but a bare IP implies plain HTTP, so a production build refuses to adopt it and tells the
+operator to enter the clinic's HTTPS endpoint in Settings. The discovery result is what
+tells them which host it is.
+
+`csp` is injected into the built application; `devCsp` only during development. Tauri
+selects between them at `manager/mod.rs::csp()` on `is_dev()`, which is
+`!cfg!(feature = "custom-protocol")` — a feature `tauri build` enables and `tauri dev` does
+not. The dev CSP string is therefore present in the binary as inert config data and is
+never read in a release build.
+
+`style-src 'unsafe-inline'` is retained because MUI v6 with emotion injects `<style>`
+elements at runtime. It is scoped to `style-src` only; `script-src` has no
+`unsafe-inline` and no `unsafe-eval`.
+
+`https:` and `wss:` are scheme-scoped rather than a fixed origin because the server
+address is operator-configured and therefore unknown when the app is built. `*`,
+`http:` and `unsafe-eval` appear nowhere in the production CSP.
 ---
 
 ## 6. Deployment model

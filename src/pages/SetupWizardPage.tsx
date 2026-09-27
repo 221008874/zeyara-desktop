@@ -33,8 +33,13 @@ export const SetupWizardPage: React.FC = () => {
   const [saving, setSaving] = React.useState(false);
   const [done, setDone] = React.useState(false);
 
+  // Only applies an already-configured address. An empty host is the normal state on
+  // first run, and an address that fails the HTTPS policy is left alone rather than
+  // being applied, so the wizard cannot silently downgrade the connection.
   const applyServer = React.useCallback(() => {
-    setServerBaseUrl(settings.serverHost, settings.serverPort);
+    const host = settings.serverHost?.trim();
+    if (!host) return;
+    setServerBaseUrl(host, settings.serverPort);
   }, [settings.serverHost, settings.serverPort]);
 
   const handleNext = async () => {

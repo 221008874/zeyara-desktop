@@ -1,5 +1,6 @@
 import { getBaseUrl } from './api';
 import { getAppVersion } from './version';
+import { isFetchableUrl } from './serverUrl';
 
 const APP_ID = 'desktop';
 
@@ -91,6 +92,16 @@ export interface VerifiedUpdate {
 export async function downloadVerifiedUpdate(info: UpdateInfo): Promise<VerifiedUpdate> {
   const url = info.msiUrl || info.downloadUrl;
   if (!url) throw new Error('No download URL was published for this release.');
+
+  // The expected checksum arrives over the same channel as the artifact, so over plain
+  // HTTP the verification is self-referential: anything able to swap the installer can
+  // swap the expected hash with it. A production build only accepts an https artifact.
+  if (!isFetchableUrl(url)) {
+    throw new Error(
+      `The published download URL is not a permitted transport (${new URL(url).protocol}//). ` +
+        'Refusing to download over an unverified channel.'
+    );
+  }
 
   const expected = info.checksum ? normaliseChecksum(info.checksum) : null;
   if (!expected) {

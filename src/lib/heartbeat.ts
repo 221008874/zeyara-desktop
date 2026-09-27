@@ -19,15 +19,23 @@ function isLoopbackServer(info: HeartbeatServer): boolean {
  *
  * Only ever called for a server that passed verification in Rust, or one the operator
  * explicitly accepted from the candidate list. Discovery on its own never reaches here.
+ *
+ * Returns a validation message when the address is refused. Discovery identifies a
+ * server on the LAN but must not bypass the transport policy: a bare IP implies plain
+ * HTTP, which a production build refuses. The clinic then has to supply its HTTPS
+ * endpoint in Settings, and the discovery result is what tells them which host it is.
  */
-function applyServer(info: HeartbeatServer) {
+function applyServer(info: HeartbeatServer): { ok: true } | { ok: false; message: string } {
+  const result = setServerBaseUrl(info.ip, info.port);
+  if (!result.ok) return { ok: false, message: result.message };
+
   const isNew = !currentServer || currentServer.ip !== info.ip || currentServer.port !== info.port;
   currentServer = info;
-  setServerBaseUrl(info.ip, info.port);
   useSettingsStore.getState().setServerConfig(info.ip, String(info.port));
   if (isNew) {
     import('./notificationBus').then((m) => m.notificationBus.refresh()).catch(() => {});
   }
+  return { ok: true };
 }
 
 async function attachListeners() {
@@ -36,12 +44,24 @@ async function attachListeners() {
 
   unlistenFns.push(
     await listen<HeartbeatServer>('heartbeat://online', (e) => {
-      applyServer(e.payload);
-      hb.setOnline(e.payload);
+      // A verified server still has to satisfy the transport policy. Recording it as
+      // online while the address was refused would show a green light for a connection
+      // that cannot exist.
+      const applied = applyServer(e.payload);
+      if (applied.ok) {
+        hb.setOnline(e.payload);
+      } else {
+        hb.setError(applied.message);
+        hb.setCandidates([e.payload], hb.unverifiedMode);
+      }
     }),
     await listen<HeartbeatServer>('heartbeat://server-changed', (e) => {
-      applyServer(e.payload);
-      hb.setServerChanged(e.payload);
+      const applied = applyServer(e.payload);
+      if (applied.ok) {
+        hb.setServerChanged(e.payload);
+      } else {
+        hb.setError(applied.message);
+      }
     }),
     await listen<HeartbeatServer>('heartbeat://offline', () => {
       hb.setOffline();
@@ -106,32 +126,52 @@ export async function stopHeartbeatMonitor(): Promise<void> {
 /**
  * Approves one of the discovered candidates.
  *
- * Records the decision so it persists, verifies the server actually answers before
- * adopting it, and only then points the client at it. A candidate that does not respond
- * is not adopted, so the list cannot be used to point the app at a dead or hostile host.
+ * Records the decision so it persists, verifies the server actually answers, then applies
+ * the same transport policy as any other address. A candidate that does not respond, or
+ * whose implied plain-HTTP address a production build refuses, is not adopted — so the
+ * candidate list cannot be used to point the app at a dead host or to downgrade the
+ * connection.
  */
-export async function acceptCandidate(candidate: HeartbeatServer): Promise<{ ok: boolean; message?: string }> {
-  useHeartbeatStore.getState().acceptServer(candidate);
+export async function acceptCandidate(
+  candidate: HeartbeatServer
+): Promise<{ ok: boolean; message?: string }> {
+  // Validate before recording the decision, so a refused address is not persisted as
+  // "accepted" and then re-prompted on every launch.
+  const applied = applyServer(candidate);
+  if (!applied.ok) {
+    useHeartbeatStore.getState().setCandidates(
+      [candidate],
+      useHeartbeatStore.getState().unverifiedMode
+    );
+    return {
+      ok: false,
+      message:
+        `${applied.message} (اكتشف التطبيق الخادم على ${candidate.ip}:${candidate.port}، ` +
+        'أدخل عنوان HTTPS الخاص به في الإعدادات.)',
+    };
+  }
 
   const probe = await probeServer(candidate.ip, String(candidate.port));
   if (!probe.ok) {
-    useHeartbeatStore.getState().setCandidates([candidate], useHeartbeatStore.getState().unverifiedMode);
+    // Undo: it answered the policy check but not an actual request.
+    useHeartbeatStore.getState().setCandidates(
+      [candidate],
+      useHeartbeatStore.getState().unverifiedMode
+    );
+    currentServer = null;
     return { ok: false, message: probe.message };
   }
 
-  if (!isTauriApp) {
-    applyServer(candidate);
-    useHeartbeatStore.getState().setOnline(candidate);
-    return { ok: true };
+  useHeartbeatStore.getState().acceptServer(candidate);
+  useHeartbeatStore.getState().setOnline(candidate);
+
+  if (isTauriApp) {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('accept_discovered_server', { ip: candidate.ip, port: candidate.port });
+    } catch { /* the URL is already applied */ }
   }
 
-  try {
-    const { invoke } = await import('@tauri-apps/api/core');
-    await invoke('accept_discovered_server', { ip: candidate.ip, port: candidate.port });
-  } catch { /* the URL is still applied below */ }
-
-  applyServer(candidate);
-  useHeartbeatStore.getState().setOnline(candidate);
   return { ok: true };
 }
 

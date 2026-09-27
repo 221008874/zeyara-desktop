@@ -6,7 +6,14 @@ import type { HeartbeatServer } from '../stores/heartbeat';
 
 vi.mock('../lib/api', async (orig) => {
   const actual = await orig<typeof import('../lib/api')>();
-  return { ...actual, isTauriApp: false, probeServer: vi.fn(), setServerBaseUrl: vi.fn() };
+  return {
+    ...actual,
+    isTauriApp: false,
+    // Only the network call is stubbed. setServerBaseUrl is deliberately the REAL one so
+    // these tests exercise the transport policy end to end rather than a stub's return
+    // value - stubbing it previously hid the fact that the caller depends on its result.
+    probeServer: vi.fn(),
+  };
 });
 
 vi.mock('../lib/notificationBus', () => ({ notificationBus: { refresh: vi.fn() } }));
@@ -21,6 +28,16 @@ const server = (over: Partial<HeartbeatServer> = {}): HeartbeatServer => ({
   lastSeenAt: Date.now(),
   ...over,
 });
+
+/**
+ * A candidate the transport policy will actually accept.
+ *
+ * A discovered bare IP implies plain HTTP, which every build refuses except for
+ * loopback in development, so the adoption cases use a loopback address. The
+ * non-loopback case has its own test below.
+ */
+const adoptable = (over: Partial<HeartbeatServer> = {}) =>
+  server({ ip: '127.0.0.1', port: 8081, ...over });
 
 describe('discovery trust policy', () => {
   beforeEach(() => {
@@ -62,11 +79,11 @@ describe('discovery trust policy', () => {
   it('adopts a candidate only after the server actually answers', async () => {
     useHeartbeatStore.getState().setCandidates([server()], false);
 
-    const result = await acceptCandidate(server());
+    const result = await acceptCandidate(adoptable());
 
     expect(result.ok).toBe(true);
     expect(useHeartbeatStore.getState().status).toBe('online');
-    expect(useHeartbeatStore.getState().acceptedServer).toBe('192.168.1.8:8081');
+    expect(useHeartbeatStore.getState().acceptedServer).toBe('127.0.0.1:8081');
   });
 
   it('does not adopt a candidate that does not respond', async () => {
@@ -75,7 +92,7 @@ describe('discovery trust policy', () => {
     mockedProbe.mockResolvedValue({ ok: false, message: 'connection refused' });
     useHeartbeatStore.getState().setCandidates([server()], false);
 
-    const result = await acceptCandidate(server());
+    const result = await acceptCandidate(adoptable());
 
     expect(result.ok).toBe(false);
     expect(result.message).toContain('refused');
@@ -85,19 +102,41 @@ describe('discovery trust policy', () => {
   });
 
   it('probes the exact host and port from the candidate', async () => {
-    await acceptCandidate(server({ ip: '10.0.0.5', port: 9090 }));
-    expect(mockedProbe).toHaveBeenCalledWith('10.0.0.5', '9090');
+    await acceptCandidate(adoptable({ ip: '127.0.0.1', port: 9090 }));
+    expect(mockedProbe).toHaveBeenCalledWith('127.0.0.1', '9090');
+  });
+
+  it('refuses a discovered non-loopback http endpoint and does not probe it', async () => {
+    // AC12: discovery may identify a server, but must not bypass the transport policy.
+    // A bare LAN IP implies plain HTTP, which this build refuses, so nothing is fetched
+    // and nothing is adopted.
+    const lanCandidate = server({ ip: '192.168.1.8', port: 8081 });
+    useHeartbeatStore.getState().setCandidates([lanCandidate], false);
+
+    const result = await acceptCandidate(lanCandidate);
+
+    expect(result.ok).toBe(false);
+    expect(result.message).toMatch(/https/);
+    expect(mockedProbe).not.toHaveBeenCalled();
+    expect(useHeartbeatStore.getState().status).toBe('awaiting-choice');
+    expect(useHeartbeatStore.getState().server).toBeNull();
+  });
+
+  it('does not persist a refused candidate as accepted', async () => {
+    // Otherwise the operator is re-prompted on every launch with no way forward.
+    await acceptCandidate(server({ ip: '192.168.1.8', port: 8081 }));
+    expect(useHeartbeatStore.getState().acceptedServer).toBeNull();
   });
 
   it('removes the accepted candidate from the pending list', async () => {
-    useHeartbeatStore.getState().setCandidates([server()], false);
-    await acceptCandidate(server());
+    useHeartbeatStore.getState().setCandidates([adoptable()], false);
+    await acceptCandidate(adoptable());
     expect(useHeartbeatStore.getState().candidates).toEqual([]);
   });
 
   it('forgetting the server makes the next launch ask again', async () => {
-    await acceptCandidate(server());
-    expect(useHeartbeatStore.getState().acceptedServer).toBe('192.168.1.8:8081');
+    await acceptCandidate(adoptable());
+    expect(useHeartbeatStore.getState().acceptedServer).toBe('127.0.0.1:8081');
 
     forgetAcceptedServer();
 

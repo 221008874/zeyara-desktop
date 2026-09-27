@@ -1,6 +1,17 @@
 
 
 
+import { validateServerOrigin, activePolicy, candidateFromHostPort } from './serverUrl';
+
+export type { ServerUrlError, ServerUrlErrorCode } from './serverUrl';
+export {
+  validateServerOrigin,
+  activePolicy,
+  isProductionBuild,
+  isFetchableUrl,
+  candidateFromHostPort,
+} from './serverUrl';
+
 const isTauriApp =
   typeof window !== 'undefined' &&
   ((window as any).isTauri === true ||
@@ -30,20 +41,30 @@ let BASE_URL = getInitialBaseUrl();
 /**
  * Points all API/SSE calls at a server.
  *
- * Accepts a full origin so an HTTPS deployment can be used as-is; a bare host and port
- * are treated as plain HTTP. Hard-coding `http://` here would make a TLS-terminating
- * reverse proxy unreachable, because the page is served over a secure context and a
- * mixed-content request would be blocked.
+ * A full `https://host[:port]` origin is accepted, so a TLS-terminating reverse proxy can
+ * sit in front of the Clinic Server without the app needing to know its hostname or
+ * certificate.
+ *
+ * `http://` is accepted only for loopback in a development build. In a production build
+ * it is refused with an explanation rather than being upgraded to `https://`, because a
+ * silent upgrade turns a configuration mistake into a confusing certificate error.
+ * Bare `host` and `host:port` are refused too, so the scheme is always explicit.
+ *
+ * Returns the validation result; callers are expected to surface `error.message`.
  */
-export function setServerBaseUrl(host: string, port?: number | string): void {
-  const raw = String(host).trim();
-  if (/^https?:\/\//i.test(raw)) {
-    BASE_URL = raw.replace(/\/+$/, '');
-  } else {
-    const p = port === undefined || port === '' ? '' : `:${port}`;
-    BASE_URL = `http://${raw}${p}`;
+export function setServerBaseUrl(
+  host: string,
+  port?: number | string
+): { ok: true } | { ok: false; message: string } {
+  const policy = activePolicy();
+  const result = validateServerOrigin(candidateFromHostPort(host, port, policy), policy);
+  if (!result.ok) {
+    return { ok: false, message: result.error.message };
   }
+
+  BASE_URL = result.origin;
   localStorage.setItem('zeyara_server_config', BASE_URL);
+  return { ok: true };
 }
 
 export function getBaseUrl(): string {
@@ -60,14 +81,24 @@ export function resetServerBaseUrl(): void {
 }
 
 /**
- * Probe a candidate server (host:port) WITHOUT changing the active BASE_URL.
+ * Probe a candidate server WITHOUT changing the active BASE_URL.
  * The server's /api/health endpoint returns the plain text "UP".
+ *
+ * The candidate goes through exactly the same validation as a configured URL, so the
+ * "test connection" button cannot be used to reach a plain-HTTP server that the app would
+ * then refuse to actually use.
  */
 export async function probeServer(
   host: string,
-  port: string | number
+  port?: string | number
 ): Promise<{ ok: boolean; message: string }> {
-  const target = `http://${host}:${port}`;
+  const policy = activePolicy();
+  const validated = validateServerOrigin(candidateFromHostPort(host, port, policy), policy);
+  if (!validated.ok) {
+    return { ok: false, message: validated.error.message };
+  }
+
+  const target = validated.origin;
   try {
     const res = await fetch(`${target}/api/health`, {
       headers: DEFAULT_HEADERS,
