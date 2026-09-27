@@ -28,7 +28,29 @@ import {
   Typography,
 } from '@mui/material';
 import { api } from '../lib/api';
+import { completeVisit, EXAMINATION_CATEGORY, FOLLOW_UP_OFFSET_DAYS, FOLLOW_UP_TIME_ZONE } from '../lib/clinicalActions';
+import {
+  collectAgainstPayment,
+  outstandingPayments,
+  remainingOf,
+  type CollectionRejection,
+} from '../lib/paymentCollection';
 import { todayISO } from '../lib/format';
+
+/** User-facing text for a refused collection. Shared by every entry point. */
+function collectionError(reason: CollectionRejection | undefined, remaining?: number): string {
+  const bal = remaining !== undefined ? ` (${remaining.toFixed(2)} ج.م)` : '';
+  switch (reason) {
+    case 'no-payment':
+      return 'لا يوجد دفعة مفتوحة للتحصيل.';
+    case 'not-outstanding':
+      return 'لا يوجد رصيد مستحق على هذه الدفعة.';
+    case 'exceeds-remaining':
+      return `المبلغ يتجاوز الرصيد المتبقي${bal}.`;
+    default:
+      return 'المبلغ المحصل يجب أن يكون أكبر من صفر.';
+  }
+}
 import { ConfirmDialog } from '../design-system/ConfirmDialog';
 import { EmptyState } from '../design-system/EmptyState';
 import {
@@ -69,10 +91,18 @@ export const PatientDashboardPage: React.FC = () => {
     paymentDate: todayISO(),
     notes: '',
   });
+  // Which existing payment a collection settles. Null means "record a new charge", which is
+  // what the form did before; a value means "add this to what is already owed".
+  const [collectTarget, setCollectTarget] = React.useState<any | null>(null);
+  const [collectAmount, setCollectAmount] = React.useState('');
 
   const [completeTarget, setCompleteTarget] = React.useState<any | null>(null);
   const [diagnosis, setDiagnosis] = React.useState('');
   const [completionNotes, setCompletionNotes] = React.useState('');
+  // Only meaningful for an examination, matching the legacy app where the amount field was
+  // shown exclusively in that branch.
+  const [followUpAmount, setFollowUpAmount] = React.useState('');
+  const [completeNotice, setCompleteNotice] = React.useState<string | null>(null);
   const [completing, setCompleting] = React.useState(false);
 
   const [stopTarget, setStopTarget] = React.useState<any | null>(null);
@@ -124,7 +154,14 @@ export const PatientDashboardPage: React.FC = () => {
     load();
   }, [load]);
 
-  const openCollect = () => {
+  // The payments this patient still owes on. The first is the default target, matching the
+  // legacy quick-pay which always acted on `unpaid.get(0)`.
+  const openPayments = React.useMemo(() => outstandingPayments(payments), [payments]);
+
+  const openCollectNew = () => {
+    setCollectTarget(null);
+    setCollectAmount('');
+    setError(null);
     const remaining = summary?.totalRemaining ?? patient?.remainingBalance ?? 0;
     setPayForm({
       totalAmount: String(remaining || ''),
@@ -134,6 +171,39 @@ export const PatientDashboardPage: React.FC = () => {
       notes: '',
     });
     setCollectOpen(true);
+  };
+
+  /** Collect against a payment that already exists, rather than recording a second charge. */
+  const openCollectExisting = (payment: any) => {
+    setCollectTarget(payment);
+    setCollectAmount(String(remainingOf(payment) || ''));
+    setError(null);
+    setPayForm((prev) => ({ ...prev, paymentMethod: payment.paymentMethod ?? 'CASH' }));
+    setCollectOpen(true);
+  };
+
+  const submitCollectExisting = async () => {
+    if (!collectTarget) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const result = await collectAgainstPayment(
+        collectTarget,
+        Number(collectAmount),
+        payForm.paymentMethod
+      );
+      if (!result.ok) {
+        setError(collectionError(result.reason, result.remaining));
+        return;
+      }
+      setCollectOpen(false);
+      setCollectTarget(null);
+      await load();
+    } catch (err: any) {
+      setError(err.message || 'فشل تحصيل الدفعة');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const submitPayment = async () => {
@@ -166,6 +236,11 @@ export const PatientDashboardPage: React.FC = () => {
     } finally {
       setSaving(false);
     }
+  };
+
+  const submitCollect = () => {
+    if (collectTarget) return submitCollectExisting();
+    return submitPayment();
   };
 
   const exportPDF = () => {
@@ -333,7 +408,16 @@ export const PatientDashboardPage: React.FC = () => {
                         <TableCell>{fmt(p.paidAmount)}</TableCell>
                         <TableCell>{fmt(p.remainingAmount)}</TableCell>
                         <TableCell>{p.paymentMethod ?? '-'}</TableCell>
-                        <TableCell>{p.notes ?? '-'}</TableCell>
+                        <TableCell>
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                            <span>{p.notes ?? '-'}</span>
+                            {remainingOf(p) > 0 && (
+                              <Button size="small" onClick={() => openCollectExisting(p)}>
+                                تحصيل
+                              </Button>
+                            )}
+                          </Box>
+                        </TableCell>
                       </TableRow>
                     ))
                   )}
@@ -341,10 +425,15 @@ export const PatientDashboardPage: React.FC = () => {
               </Table>
             </TableContainer>
           </Paper>
-          <Box sx={{ mt: 2 }}>
-            <Button variant="contained" color="primary" onClick={openCollect}>
-              تحصيل دفعة
+          <Box sx={{ mt: 2, display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+            <Button variant="contained" color="primary" onClick={openCollectNew}>
+              تسجيل دفعة جديدة
             </Button>
+            {openPayments.length > 0 && (
+              <Button variant="outlined" color="primary" onClick={() => openCollectExisting(openPayments[0])}>
+                {`تحصيل من الأقدم (${openPayments.length} مفتوحة)`}
+              </Button>
+            )}
           </Box>
         </Box>
       )}
@@ -507,6 +596,16 @@ export const PatientDashboardPage: React.FC = () => {
               multiline
               minRows={2}
             />
+            {(completeTarget?.category ?? '') === EXAMINATION_CATEGORY && (
+              <TextField
+                label="مبلغ الموعد التالي (جنيه)"
+                type="number"
+                value={followUpAmount}
+                onChange={(e) => setFollowUpAmount(e.target.value)}
+                fullWidth
+                helperText={`سيتم حجز موعد متابعة تلقائياً بعد ${FOLLOW_UP_OFFSET_DAYS} يوماً في الفترة الصباحية.`}
+              />
+            )}
           </Box>
         </DialogContent>
         <DialogActions>
@@ -519,15 +618,32 @@ export const PatientDashboardPage: React.FC = () => {
               if (!completeTarget) return;
               setCompleting(true);
               setError(null);
+              setCompleteNotice(null);
               try {
-                await api.post(`/api/appointments/${completeTarget.id}/complete`, {
-                  diagnosis: diagnosis.trim() || undefined,
-                  notes: completionNotes.trim() || undefined,
+                const result = await completeVisit({
+                  appointmentId: completeTarget.id,
+                  patientId,
+                  category: completeTarget.category,
+                  diagnosis,
+                  notes: completionNotes,
+                  followUpAmount,
+                  today: todayISO(),
                 });
                 setCompleteTarget(null);
+                setFollowUpAmount('');
+                setCompletionNotes('');
+                // The visit is closed regardless. A follow-up that could not be booked is
+                // reported, not treated as a failure of the completion.
+                if (result.followUp) {
+                  setCompleteNotice(
+                    `تم حجز موعد المتابعة تلقائياً في ${result.followUp.date} (${FOLLOW_UP_TIME_ZONE === 'MORNING' ? 'صباحاً' : result.followUp.timeZone}).`
+                  );
+                } else if (result.followUpError) {
+                  setCompleteNotice(`تم إتمام الموعد، لكن تعذّر حجز المتابعة: ${result.followUpError}`);
+                }
                 await load();
               } catch (err: any) {
-                setError(err.message || 'فشل إتمام الموعد');
+                setError(err.message || 'تعذّر إتمام الموعد');
               } finally {
                 setCompleting(false);
               }
@@ -538,58 +654,98 @@ export const PatientDashboardPage: React.FC = () => {
         </DialogActions>
       </Dialog>
 
+      {completeNotice && (
+        <Alert severity="success" sx={{ mb: 2 }} onClose={() => setCompleteNotice(null)}>
+          {completeNotice}
+        </Alert>
+      )}
+
       <Dialog open={collectOpen} onClose={() => {}} disableEscapeKeyDown maxWidth="sm" fullWidth>
-        <DialogTitle>تحصيل دفعة</DialogTitle>
+        <DialogTitle>
+          {collectTarget ? 'تحصيل من دفعة مفتوحة' : 'تحصيل دفعة'}
+        </DialogTitle>
         <DialogContent>
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 1 }}>
-            <TextField
-              label="المبلغ الإجمالي (جنيه)"
-              type="number"
-              fullWidth
-              value={payForm.totalAmount}
-              onChange={(e) => setPayForm((f) => ({ ...f, totalAmount: e.target.value }))}
-            />
-            <TextField
-              label="المبلغ المدفوع (جنيه)"
-              type="number"
-              fullWidth
-              value={payForm.paidAmount}
-              onChange={(e) => setPayForm((f) => ({ ...f, paidAmount: e.target.value }))}
-            />
-            <FormControl fullWidth>
-              <InputLabel>طريقة الدفع</InputLabel>
-              <Select
-                label="طريقة الدفع"
-                value={payForm.paymentMethod}
-                onChange={(e) => setPayForm((f) => ({ ...f, paymentMethod: e.target.value }))}
-              >
-                <MenuItem value="CASH">نقدي</MenuItem>
-                <MenuItem value="CARD">بطاقة</MenuItem>
-                <MenuItem value="TRANSFER">تحويل</MenuItem>
-                <MenuItem value="OTHER">أخرى</MenuItem>
-              </Select>
-            </FormControl>
-            <TextField
-              label="التاريخ"
-              type="date"
-              fullWidth
-              InputLabelProps={{ shrink: true }}
-              value={payForm.paymentDate}
-              onChange={(e) => setPayForm((f) => ({ ...f, paymentDate: e.target.value }))}
-            />
-            <TextField
-              label="ملاحظات"
-              fullWidth
-              multiline
-              minRows={2}
-              value={payForm.notes}
-              onChange={(e) => setPayForm((f) => ({ ...f, notes: e.target.value }))}
-            />
+            {collectTarget ? (
+              <>
+                <Alert severity="info">
+                  {`الدفعة #${collectTarget.id} — المتبقي ${remainingOf(collectTarget).toFixed(2)} ج.م. ` +
+                    'سيُحدَّث نفس السجل، ولن يتم إنشاء دفعة جديدة.'}
+                </Alert>
+                <TextField
+                  label="المبلغ المحصل (جنيه)"
+                  type="number"
+                  fullWidth
+                  value={collectAmount}
+                  onChange={(e) => setCollectAmount(e.target.value)}
+                  helperText={`الحد الأقصى ${remainingOf(collectTarget).toFixed(2)} ج.م`}
+                />
+                <FormControl fullWidth>
+                  <InputLabel>طريقة الدفع</InputLabel>
+                  <Select
+                    label="طريقة الدفع"
+                    value={payForm.paymentMethod}
+                    onChange={(e) => setPayForm((f) => ({ ...f, paymentMethod: e.target.value }))}
+                  >
+                    <MenuItem value="CASH">نقدي</MenuItem>
+                    <MenuItem value="CARD">بطاقة</MenuItem>
+                    <MenuItem value="TRANSFER">تحويل</MenuItem>
+                    <MenuItem value="OTHER">أخرى</MenuItem>
+                  </Select>
+                </FormControl>
+              </>
+            ) : (
+              <>
+                <TextField
+                  label="المبلغ الإجمالي (جنيه)"
+                  type="number"
+                  fullWidth
+                  value={payForm.totalAmount}
+                  onChange={(e) => setPayForm((f) => ({ ...f, totalAmount: e.target.value }))}
+                />
+                <TextField
+                  label="المبلغ المدفوع (جنيه)"
+                  type="number"
+                  fullWidth
+                  value={payForm.paidAmount}
+                  onChange={(e) => setPayForm((f) => ({ ...f, paidAmount: e.target.value }))}
+                />
+                <FormControl fullWidth>
+                  <InputLabel>طريقة الدفع</InputLabel>
+                  <Select
+                    label="طريقة الدفع"
+                    value={payForm.paymentMethod}
+                    onChange={(e) => setPayForm((f) => ({ ...f, paymentMethod: e.target.value }))}
+                  >
+                    <MenuItem value="CASH">نقدي</MenuItem>
+                    <MenuItem value="CARD">بطاقة</MenuItem>
+                    <MenuItem value="TRANSFER">تحويل</MenuItem>
+                    <MenuItem value="OTHER">أخرى</MenuItem>
+                  </Select>
+                </FormControl>
+                <TextField
+                  label="التاريخ"
+                  type="date"
+                  fullWidth
+                  InputLabelProps={{ shrink: true }}
+                  value={payForm.paymentDate}
+                  onChange={(e) => setPayForm((f) => ({ ...f, paymentDate: e.target.value }))}
+                />
+                <TextField
+                  label="ملاحظات"
+                  fullWidth
+                  multiline
+                  minRows={2}
+                  value={payForm.notes}
+                  onChange={(e) => setPayForm((f) => ({ ...f, notes: e.target.value }))}
+                />
+              </>
+            )}
           </Box>
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setCollectOpen(false)}>إلغاء</Button>
-          <Button variant="contained" onClick={submitPayment} disabled={saving}>
+          <Button variant="contained" onClick={submitCollect} disabled={saving}>
             {saving ? 'جاري الحفظ...' : 'حفظ'}
           </Button>
         </DialogActions>

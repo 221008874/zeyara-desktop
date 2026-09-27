@@ -6,6 +6,7 @@ import {
   Alert, CircularProgress,
 } from '@mui/material';
 import { api } from '../lib/api';
+import { createAppointment } from '../lib/clinicalActions';
 import { todayISO } from '../lib/format';
 
 export const AddAppointmentPage: React.FC = () => {
@@ -126,7 +127,9 @@ const handleSubmit = async (e: React.FormEvent) => {
         patientId,
         requiredAmount: form.requiredAmount ? Number(form.requiredAmount) : undefined,
       };
-      await api.post('/api/appointments', payload);
+      // Goes through the shared helper so this screen and the post-examination follow-up
+      // cannot drift into two different appointment-creation contracts.
+      await createAppointment(payload);
       navigate('/appointments', { replace: true });
     } catch (err: any) {
       // The server's clash message is more specific than the generic fallback, so

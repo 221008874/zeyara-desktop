@@ -7,18 +7,91 @@
 
 ## Verdict
 
-**NOT_READY** — three blocking workflows, all in the doctor/clinical path and all
-patient-data-affecting:
+**NOT_READY** — B1 is the only remaining blocker and is **DECISION_REQUIRED**, not a code gap.
+B2 and B3 are closed and **REPLACED**.
 
-| # | Blocking gap | Legacy evidence |
-|---|---|---|
-| B1 | **Patient media gallery** (photos/videos) has no equivalent | DR `patientDashboard.openGallery` |
-| B2 | **Auto-schedule follow-up** after completing an examination is absent | DR `promptPostCompletionActions` |
-| B3 | **Partial / quick collection against an existing outstanding payment** is absent | Secretary `handleCollectPayment`, `handleQuickCollect` |
+| # | Gap | Status | Resolution |
+|---|---|---|---|
+| B1 | **Patient media gallery** (photos/videos) has no equivalent | **DECISION_REQUIRED** | Needs a scope decision — see the note immediately below. No Clinic Server change made. |
+| B2 | **Auto-schedule follow-up** after completing an examination | **REPLACED** | `src/lib/clinicalActions.ts`; 25 tests, 8 mutations killed — §4a |
+| B3 | **Partial / quick collection** against an existing outstanding payment | **REPLACED** | `src/lib/paymentCollection.ts`; 22 tests, 6 mutations killed — §4b |
 
-None is a security or data-loss defect. All three are clinical/financial workflows a clinic
-uses daily. Everything else is either REPLACED, improved, or intentionally removed by
-architecture.
+B1 is a product decision rather than an implementation task, so overall status stays
+`NOT_READY` until it is chosen. The JavaFX apps must be retained until then: they are the
+only working home for patient media.
+
+---
+
+## B1 — Patient media gallery: decision required
+
+Not implemented. `Clinic Server` was **not** modified. This section exists so the choice can
+be made deliberately.
+
+### What the legacy app does
+
+DR `patientDashboard.openGallery` creates
+`~/.clinicapp/patients/patient_{id}_{name}/{photos,videos}`, uploads images
+(`jpg jpeg png gif bmp webp`) and videos (`mp4 avi mov wmv mkv flv`) with `_1`/`_2`
+de-duplication, and previews them in a modal stage: images at 600×400 with **Open in
+Viewer**, videos through `MediaPlayer`/`MediaView` with **Play / Pause / Stop / Open in
+Player**, and a thumbnail pane per directory.
+
+Critically: **media is never uploaded to the server.** It lives in one user's profile
+directory. Another device, another user, and the server have no idea it exists. This was
+true in production, not an oversight in a test environment.
+
+### Option A — Local-only parity
+
+Reproduce the legacy behaviour exactly.
+
+- Patient media stays in the client profile directory; nothing is sent to the server.
+- No server persistence, no cross-device visibility, no sharing between receptionist and doctor.
+- Requires only client work: an upload capability in `src-tauri/capabilities/default.json`
+  (currently nothing can write an arbitrary path), a gallery UI on
+  `PatientDashboardPage`, and image/video preview.
+- **Cost:** smallest. **Trade-off:** faithfully reproduces a limitation. Two machines in the
+  same clinic see different galleries, and a reinstall or a profile reset loses the media.
+  It is only defensible if the clinic runs a single front-desk PC.
+- **Risk:** low. No server contract, no authorization question, nothing to migrate.
+
+### Option B — Server-backed media
+
+Media becomes clinic data that the server owns.
+
+Needs `Clinic Server` support for:
+
+| Concern | What is required |
+|---|---|
+| Upload | authenticated multipart endpoint, size and type limits, content validation |
+| Metadata | filename, MIME type, byte size, checksum, capture date |
+| Patient association | every record bound to a `patientId`, enforced server-side |
+| Retrieval | list and fetch per patient, with pagination |
+| Authorization | who may read and write — a doctor's clinical media is not necessarily a secretary's to read |
+| Storage lifecycle | on-disk layout, backup inclusion, retention, delete |
+
+- **Cost:** substantially larger. New endpoints, new authorization rules, storage and backup
+  changes, plus client upload/preview work.
+- **Benefit:** media is visible to the whole clinic, survives a reinstall, and can be backed
+  up and audited.
+- **Risk:** moderate. Patient clinical media is a privacy surface; the authorization matrix
+  has to be decided before the endpoints exist, not after.
+- **Note:** `BackupsPage` already performs a server-side Excel backup of patients,
+  appointments and medications, so there is an existing precedent for clinic-owned export —
+  but no precedent for binary attachments.
+
+### Recommendation
+
+**Option B**, on the condition the authorization matrix is settled first. The clinic already
+treats diagnosis, vitals and prescriptions as shared server data, and photographs of a
+patient's body are more sensitive still — not less. Option A would create a second, private
+copy of clinical data that the server does not know exists, which is the kind of gap that is
+cheap to avoid now and expensive to unpick later.
+
+If the clinic genuinely runs a single front-desk PC and never needs the media elsewhere,
+Option A is a legitimate, cheap choice — but it should be recorded as a deliberate
+limitation, not inherited by default.
+
+**No code has been written for either option, and `Clinic Server` is untouched.**
 
 ---
 
@@ -193,10 +266,10 @@ Status key: **REPLACED** = equivalent business workflow exists and is usable · 
 | D-21 | Reactivate medication | `PatientDashboardPage.tsx` | REPLACED | `PUT /api/medications/{id}` |
 | D-22 | Prescription PDF + follow-up date | `lib/patientDocs.ts` → `exportPrescriptionDocumentPdf` | **PARTIAL** | PDF present; **follow-up date is not set from the prescription flow** |
 | D-23 | Appointments tab + mark DONE | `PatientDashboardPage.tsx` | REPLACED | `POST /api/appointments/{id}/complete` |
-| D-24 | **Auto-schedule follow-up after examination** | — | **MISSING** | completion dialog has only diagnosis + notes; no amount field, no follow-up booking |
+| D-24 | **Auto-schedule follow-up after examination** | `lib/clinicalActions.ts` → `completeVisit` | **REPLACED** | +14 days, MORNING, FOLLOW_UP, amount preserved, `followUpDate` stamped. 25 tests. |
 | D-25 | Book from exit dialog | `AddAppointmentPage.tsx` | REPLACED | reachable as a normal page |
 | D-26 | History tab | `PatientDashboardPage.tsx` | REPLACED | `GET /api/patients/{id}/history` |
-| D-27 | **Patient media gallery** | — | **MISSING** | zero matches for `gallery`/`photo`/`.mp4`/`attachment`/`upload` in `src/` |
+| D-27 | **Patient media gallery** | — | **DECISION_REQUIRED** | no patient-media code and no upload capability; see the B1 decision note at the top |
 | D-28 | Unsaved-changes exit + rollback | `PatientsPage.tsx` | PARTIAL | unsaved banner exists; **no session rollback / no 3-way discard** |
 | D-29 | View appointments (day strip + stats) | `AppointmentsPage.tsx` | REPLACED (improved) | server-authoritative, adds reschedule + cancel the legacy app lacked |
 | D-30 | Cancel a time zone | `SchedulePage.tsx` | REPLACED | `PUT /api/schedule/{id}` cancelled flag |
@@ -235,10 +308,10 @@ Status key: **REPLACED** = equivalent business workflow exists and is usable · 
 | S-08 | Book for NEW patient + inline payment | `AddAppointmentPage.tsx` | PARTIAL | booking present; **inline payment capture at booking time is not combined into the booking form** |
 | S-09 | Book for EXISTING patient | `AddAppointmentPage.tsx` | REPLACED | one screen replaces both legacy variants |
 | S-10 | Patient dashboard + payment banner | `PatientDashboardPage.tsx` | REPLACED | `GET /api/payments/patient/{id}/summary` |
-| S-11 | **Partial collection on an existing payment** | `PatientDashboardPage.tsx` | **MISSING** | `submitPayment` always `POST /api/payments` (line 153). No `PUT /api/payments/{id}` exists anywhere in `src/`. |
-| S-12 | **Quick payment** | — | **MISSING** | no quick-pay against an outstanding payment |
+| S-11 | **Partial collection on an existing payment** | `lib/paymentCollection.ts` → `collectAgainstPayment` | **REPLACED** | `PUT /api/payments/{id}`, remaining semantics, over-collection refused, no second record. 22 tests. |
+| S-12 | **Quick payment** | `PatientDashboardPage.tsx` → `openCollectExisting` | **REPLACED** | per-row **تحصيل** button plus a "collect from oldest" shortcut |
 | S-13 | Payment report PDF | `lib/patientDocs.ts` → `exportPaymentDocumentPdf` | REPLACED (improved) | Arabic-capable |
-| S-14 | Dashboard quick-payment dialog | `OutstandingBalancesPage.tsx` | **PARTIAL** | lists outstanding balances, but collection targets a *new* payment, not the existing one |
+| S-14 | Dashboard quick-payment dialog | `OutstandingBalancesPage.tsx`, `PatientDashboardPage.tsx` | **REPLACED** | outstanding list links into the same per-payment collection |
 | S-15 | Outstanding-balance list | `OutstandingBalancesPage.tsx` | REPLACED (improved) | `GET /api/payments/outstanding`; CSV export added |
 | S-16 | View appointments + filters | `AppointmentsPage.tsx` | REPLACED (improved) | filters apply immediately |
 | S-17 | Reschedule | `AppointmentsPage.tsx` | REPLACED (improved) | date picker instead of a `YYYY-MM-DD` text field |
@@ -251,78 +324,87 @@ Status key: **REPLACED** = equivalent business workflow exists and is usable · 
 
 ---
 
-## 4. Blocking gaps in detail
+## 4. Blocking gaps
 
-### B1 — Patient media gallery: MISSING
+Originally three. **B2 and B3 are closed** and documented in §4a and §4b. **B1 is a scope
+decision**, documented in the note at the top of this document and referenced from §4c.
+None of the three was a security or data-loss defect; all were clinical or financial
+workflows a clinic uses daily.
 
-**Legacy:** DR `patientDashboard.openGallery` creates
-`~/.clinicapp/patients/patient_{id}_{name}/{photos,videos}`, uploads images
-(`jpg/jpeg/png/gif/bmp/webp`) and videos (`mp4/avi/mov/wmv/mkv/flv`) with `_1`/`_2`
-de-duplication, and previews them — images at 600×400 with **Open in Viewer**, videos via
-`MediaPlayer`/`MediaView` with **Play / Pause / Stop / Open in Player**, plus a thumbnail
-`FlowPane` per directory.
+---
 
-**Tauri:** nothing. A search of `src/` for `gallery`, `photo`, `.mp4`, `attachment` and
-`upload` returns **no patient-media code at all** — the only hits are MUI's `useMediaQuery` /
-`matchMedia` and the word "im**media**tely" in comments. There is no upload capability in
-`src-tauri/capabilities/default.json` either: it grants `dialog:allow-save`/`allow-open`,
-`opener:allow-open-path`/`allow-reveal-item-in-dir`, `notification:*` and `updater:*`, and
-nothing that could write an arbitrary file.
+---
 
-**Why it blocks:** a doctor's routine for a dermatology/orthopaedic case is photographing
-the lesion and attaching it to the patient. Retiring DR removes that entirely.
+## 4a. B2 — RESOLVED: auto-scheduled follow-up
 
-**Note:** the legacy gallery is *local filesystem only* — media never reached the server and
-was invisible to other devices. So this is a real workflow loss, but porting it faithfully
-means porting a local-only limitation. A server-backed media store is the correct answer and
-is a **backend change** (`Clinic Server`), which is out of scope for this audit.
+**Was:** the completion dialog had only diagnosis and notes. No amount field, no follow-up
+booking, no `followUpDate` write. A doctor had to open a second screen and re-enter the
+patient, date and amount by hand.
 
-### B2 — Auto-schedule follow-up after an examination: MISSING
+**Now:** `src/lib/clinicalActions.ts`.
 
-**Legacy:** DR `promptPostCompletionActions`, invoked automatically from
-`completeAppointment` when `category == "EXAMINATION"` and the doctor supplied an amount.
-Creates an appointment with `doctorId=1`, `date = now + 14 days`, `timeZone = "MORNING"`,
-`status = "SCHEDULED"`, `category = "FOLLOW_UP"`, `notes = "Follow-up for appointment #<id>"`,
-`amount = <nextAppointmentAmount>`, then sets `patient.followUpDate`. Shows
-*"Follow-up Scheduled — Next appointment: `<date>` | Amount: `<n>` EGP"*.
-The completion dialog exposes a **"Next Appointment Amount (EGP)"** field, pre-filled `"200"`,
-shown only when the appointment category is `EXAMINATION`.
+- `followUpPlan` is a **pure** function producing the booking payload — date `+14`
+  (`FOLLOW_UP_OFFSET_DAYS`), `MORNING`, `FOLLOW_UP`, `SCHEDULED`, notes referencing the
+  completed appointment, and `requiredAmount` when the doctor charged something. Only an
+  `EXAMINATION` produces a plan; a follow-up visit, a missing category or a missing patient
+  produce `null`.
+- `completeVisit` closes the visit first, then books the follow-up, then stamps
+  `followUpDate` via `PUT /api/patients/{id}`.
+- The amount field appears in the dialog only for examinations, matching the legacy screen.
 
-**Tauri:** `PatientDashboardPage.tsx:487-530` — the completion dialog has **only** diagnosis
-and notes. There is no amount field, no follow-up booking, and no `followUpDate` write.
+Two deliberate design points:
 
-**Why it blocks:** completing an examination is how a doctor closes a visit. The legacy flow
-guarantees the patient leaves with a booked return visit. Without it the doctor must open a
-second screen and re-enter the patient, date and amount by hand.
+- **The visit is never rolled back.** A doctor who has finished with a patient is not blocked
+  because the *next* visit could not be booked. Follow-up failures are reported in a success
+  notice, not thrown. The server also refuses a second active appointment, so "could not book"
+  is a normal outcome, not an error to resolve. Only a failed *completion* throws.
+- **One appointment-creation call site.** `createAppointment` is the only function that POSTs
+  to `/api/appointments`; `AddAppointmentPage` and the follow-up both use it, so the manual
+  and automatic paths cannot drift into different contracts.
 
-### B3 — Partial / quick collection against an existing payment: MISSING
+**Tests:** `src/test/followUpBooking.test.ts` — 25 tests covering the +14 date (including
+month, year and leap-year boundaries), MORNING, FOLLOW_UP, SCHEDULED, amount preserved /
+omitted when blank, no booking for a non-examination, call ordering, `followUpDate`
+stamping, follow-up booking failure, `followUpDate` failure, and completion failure.
+**8/8 policy mutations killed**, including a wrong offset, a wrong zone, a wrong category, a
+dropped amount, a missing `followUpDate`, and rethrowing on follow-up failure.
 
-**Legacy (Secretary):**
-- `SecPatientDashboard.handleCollectPayment` **Mode B (partial)**: mutates the existing
-  `activePartialPayment` — `paid += amount`, `remaining -= amount` — then
-  `PUT /api/payments/{serverId}` with `{id, paidAmount, remainingAmount, paymentMethod, lastUpdated}`.
-  Enforces `amount > remaining → "Amount exceeds remaining balance: {x} EGP"`.
-- `handleQuickCollect` / `PaymentCollectionDialog.handleCollection`: same update path against
-  `unpaid.get(0)`, with its own over-collection guard.
+## 4b. B3 — RESOLVED: partial and quick collection
 
-**Tauri:** `PatientDashboardPage.tsx:139-169` `submitPayment` **always** calls
-`POST /api/payments` with a brand-new `{patientId, totalAmount, paidAmount, remainingAmount, paymentMethod, notes, paymentDate}`. `openCollect` pre-fills `totalAmount` and `paidAmount` both to the outstanding remaining. A grep for `api.put` + `payments` across `src/pages/*.tsx` returns **nothing** — `PUT /api/payments/{id}` is not called anywhere in the client.
+**Was:** `submitPayment` always `POST /api/payments`. Someone paying 400 then 600 against a
+1,000 bill got **two payment records**. The sum balanced, which is why it went unnoticed,
+but the audit trail no longer matched the bill and the "amount exceeds remaining" guard was
+gone — the form only ever validated against its own fields.
 
-**Consequences:**
-1. A patient with one outstanding 1,000 EGP bill who pays 400 then 600 gets **two payment
-   records** instead of one settled record. The *sum* is right, so the balance appears
-   correct, but the audit trail and any per-invoice reconciliation differ.
-2. The **"amount exceeds remaining balance" guard is gone** — `submitPayment` only checks
-   `paidAmount <= totalAmount` against the values in its own form, so the outstanding ledger
-   is not the thing being validated.
-3. The follow-up-expiry linkage is lost: the legacy new-payment path wrote
-   `notes = "Payment for expired follow-up visit on <date>"` and left `appointmentId` null;
-   Tauri writes no such note and sends no `appointmentId`.
-4. `appointmentId` is never sent by Tauri, so payments are not linked to the appointment that
-   triggered them.
+**Now:** `src/lib/paymentCollection.ts`.
 
-**Why it blocks:** collecting a deposit against an existing bill is a standard receptionist
-task, and it is the task the legacy quick-pay was built for.
+- `planCollection` is pure: computes `paidAmount` and `remainingAmount`, and refuses
+  `no-payment`, `not-outstanding`, `invalid-amount` and `exceeds-remaining`.
+- `collectAgainstPayment` sends `PUT /api/payments/{id}` with **only** the mutable pair and
+  an optional `paymentMethod`. The server keeps what it is not given, which is how
+  `appointmentId` is preserved — sending a full body built from a partial read is exactly
+  how that link would be lost.
+- The over-collection guard compares with a 0.005 tolerance so accumulated decimal error
+  does not refuse an exact settlement, and the written `remainingAmount` is clamped at zero
+  so a tolerated few-mills over-collection cannot persist a negative balance.
+- UI: each payment row with an outstanding balance gets a **تحصيل** button, and a
+  "collect from the oldest (N open)" shortcut sits next to "record a new payment" — the
+  latter still creates a new charge, which is correct for a genuinely new bill.
+
+The endpoint already existed server-side (`PaymentController.updatePayment`) and the legacy
+secretary client used it, so **no backend change was needed**.
+
+**Tests:** `src/test/paymentCollection.test.ts` — 22 tests covering the partial update, the
+full settlement, accumulation across two collections (`400 + 600` landing on the same totals
+as `1000` once), anchoring to the payment rather than the form, `appointmentId` preservation,
+over-collection refusal with the balance reported, non-positive and non-numeric amounts,
+settled payments, negative-balance clamping, and the assertion that **`api.post` is never
+called** — the regression this closes. **6/6 policy mutations killed**, including swapping
+PUT for POST, dropping the guard, and skipping the plan.
+
+## 4c. B1 — DECISION_REQUIRED
+
+See §9. Not implemented; `Clinic Server` untouched.
 
 ---
 
@@ -360,53 +442,60 @@ unapplied appointment filters · Helvetica-only payment PDF.
 
 ## 7. Tests added
 
-**None.** This audit is a read-only comparison and surfaced no regression in code that
-AC16 already covers. Per the brief, tests are added only where they protect a discovered
-parity gap or a critical regression, and no existing test was weakened or deleted.
+The audit itself added none — it was a read-only comparison and surfaced no regression in
+code AC16 already covers. Closing B2 and B3 added **47 tests**, because those two gaps are
+exactly the case the brief describes: tests that protect a discovered parity gap.
 
-The existing **230-test** suite remains the regression net and already covers the
-authorization boundaries this audit leans on: `RoleGuard` fail-closed on a missing role,
-`ProtectedRoute` forcing password change before any clinical screen, `LicenseGate` and
-`SetupGate` failing closed, the 401 single-flight refresh, and the no-downgrade update policy.
-`scripts/mutation-check.ps1` kills 15/15 policy mutations, so those assertions are load-bearing.
+| File | Tests | Covers |
+|---|---|---|
+| `src/test/followUpBooking.test.ts` | 25 | B2: +14 date (incl. month/year/leap boundaries), MORNING, FOLLOW_UP, SCHEDULED, amount preserved/omitted, no booking for a non-examination, call ordering, `followUpDate` stamp, follow-up booking failure, `followUpDate` failure, completion failure |
+| `src/test/paymentCollection.test.ts` | 22 | B3: partial update, full settlement, accumulation (`400 + 600` ≡ `1000`), anchoring to the payment not the form, `appointmentId` preservation, over-collection refusal, invalid amounts, settled payments, negative-balance clamp, and that `api.post` is **never** called |
 
-`Clinic Server` was **not modified**. No API incompatibility was found: every endpoint the
-legacy clients call exists on the server, and every endpoint Tauri calls is one the legacy
-clients also used, with three additions that already exist server-side
-(`/api/dashboard/summary`, `/api/payments/outstanding`, `/api/payments/patient/{id}/summary`)
-plus the admin backup and Telegram-link routes.
+Both are mutation-checked, so the assertions are load-bearing rather than decorative:
+
+- **B2 — 8/8 killed:** wrong offset, wrong zone, wrong category, dropped amount, booking for
+  any category, no `followUpDate`, and rethrowing on follow-up failure.
+- **B3 — 6/6 killed:** PUT swapped for POST, over-collection guard dropped, non-positive
+  amount allowed, negative remaining written, plan skipped, and sending the whole payment
+  body (which would risk losing `appointmentId`).
+
+One mutation initially survived — removing the `Math.max(0, …)` clamp — because the test
+did not actually produce a negative. It only does so through the 0.005 over-collection
+tolerance, so the test was corrected to exercise that path rather than the clamp being
+declared unnecessary.
+
+Suite: **230 → 278 tests across 17 files**, all passing. Typecheck, production build and
+`cargo check` clean. No existing test was weakened or deleted; the pre-existing 230 are
+untouched.
+
+`Clinic Server` was **not modified**. B3 needed no backend change — `PUT /api/payments/{id}`
+already existed. No API incompatibility was found anywhere: every endpoint the legacy clients
+call exists on the server, and every endpoint Tauri calls is one the legacy clients also
+used, with three additions that already exist server-side (`/api/dashboard/summary`,
+`/api/payments/outstanding`, `/api/payments/patient/{id}/summary`) plus the admin backup
+and Telegram-link routes.
 
 ---
 
 ## 8. Recommendation
 
-### `NOT_READY — B1 patient media gallery, B2 auto-scheduled follow-up, B3 partial/quick payment collection`
+### `NOT_READY — B1 patient media gallery (DECISION_REQUIRED)`
 
-To reach `READY_TO_RETIRE_JAVA_FX`:
+B2 and B3 are closed. One decision stands between this and `READY_TO_RETIRE_JAVA_FX`.
 
-**B3 (smallest, no backend change).** Add a "collect against this payment" path to
-`PatientDashboardPage`: list the patient's outstanding payments, and `PUT /api/payments/{id}`
-with the incremented `paidAmount` / decremented `remainingAmount` plus an
-`amount <= remaining` guard. The endpoint already exists server-side
-(`PaymentController.updatePayment`, `PUT /api/payments/{id}`) — the Secretary app used it.
-Also send `appointmentId` when the payment settles an appointment.
+**Choose Option A or Option B for patient media** — both are specified in the decision note
+at the top of this document. The recommendation there is **Option B**, conditional on the
+authorization matrix being settled first, because photographs of a patient's body are more
+sensitive than the diagnosis text already on the server, and a local-only gallery creates a
+second private copy of clinical data the server does not know exists.
 
-**B2 (no backend change).** Extend the completion dialog with the "Next appointment amount"
-field shown for examinations, and on success `POST /api/appointments` with
-`date = +14d`, `timeZone = 'MORNING'`, `category = 'FOLLOW_UP'`, plus set the patient's
-`followUpDate` via `PUT /api/patients/{id}`. Reproduce the legacy business rule deliberately
-rather than the hard-coded `doctorId = 1` — use the session's doctor.
+**Option A** is a legitimate, cheap choice if the clinic genuinely runs a single front-desk PC
+— but it should be recorded as a deliberate limitation rather than inherited by default.
 
-**B1 (requires a backend decision).** Media has no server-side home. Options:
-(a) ship the gallery as local-filesystem-only, faithfully reproducing the legacy behaviour
-including its cross-device blindness; or
-(b) add server-backed media (upload/download endpoints + storage), which is a
-`Clinic Server` change and must be agreed before implementation.
-This is the one blocker that is a scope decision rather than a code change.
+Nothing else blocks retirement. Every other workflow is REPLACED, and 15 of those are
+**strictly better** than the legacy implementation — most notably signed updates, live SSE
+notifications, Arabic-capable PDFs, real role-based authorization, and correct appointment
+cancellation.
 
-Everything else is REPLACED, and 15 of those are **strictly better** than the legacy
-implementation — most notably signed updates, live SSE notifications, Arabic-capable PDFs,
-real role-based authorization, and correct appointment cancellation.
-
-The JavaFX applications remain the only working home for B1–B3 and must not be retired
-until each is closed and verified.
+**The JavaFX applications must not be retired until B1 is chosen and, if Option B, shipped
+and verified.** They remain the only working home for patient media today.
