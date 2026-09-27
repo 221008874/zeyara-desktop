@@ -1112,7 +1112,20 @@ scoping would be new scope with no existing behaviour to inherit.
 
 **Stakeholder answer:**
 
-> _______________________________________________
+> **B — Patient + Appointment.**
+
+> _Stakeholder rationale, recorded verbatim:_
+> _- Patient Media is scoped to the Patient and may also be associated with the relevant
+>   Appointment/Visit._
+> _- This decision defines media scope/linkage only; it does NOT define authorization or
+>   access behavior._
+
+> _One factual note, which decides nothing:_
+> _The decision-impact text above flags whether media inherits appointment visibility
+> semantics as an open consequence. This answer explicitly does not decide that. Whether an
+> appointment link affects what a given role may see is a separate, still-unanswered question,
+> and no inheritance is assumed here. Authorization remains as answered in D2, D3, D4.2 and
+> D5, none of which D7 alters._
 
 ---
 
